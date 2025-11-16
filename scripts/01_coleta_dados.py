@@ -7,12 +7,11 @@ import os
 # Companhia Energética de Minas Gerais - CEMIG
 SYMBOL = "CMIG4.SA"
 
-# Datas de início e fim da base (mantidas do exemplo)
+# Datas de início e fim da base
 START_DATE = "2018-01-01"
 END_DATE = "2025-10-31"
 
 # Caminho para salvar os dados (Data Lake - Raw)
-# (Dentro de C:\fiap-tech-challenge-fase4\data\01_raw\)
 RAW_DATA_PATH = os.path.join(
     os.path.dirname(__file__), "..", "data", "01_raw", f"{SYMBOL}_data_raw.csv"
 )
@@ -22,33 +21,48 @@ RAW_DATA_PATH = os.path.join(
 
 def download_stock_data(symbol: str, start: str, end: str, output_path: str):
     """
-    Baixa os dados históricos de uma ação usando o yfinance
-    e salva em um arquivo CSV.
+    Baixa os dados históricos de uma ação usando o yfinance e salva em um arquivo CSV.
 
     Args:
-        symbol (str): O ticker da ação (ex: 'CMIG4.SA').
+        symbol (str): O ticker da ação.
         start (str): Data de início (YYYY-MM-DD).
         end (str): Data de fim (YYYY-MM-DD).
         output_path (str): Caminho completo para salvar o .csv.
     """
     print(f"Iniciando download dos dados para {symbol}...")
+    print(f"Período: {start} até {end}")
 
     try:
-        # Use a função download para obter os dados
-        df = yf.download(symbol, start=start, end=end)
+        # 1. Cria o objeto Ticker
+        ticker = yf.Ticker(symbol)
+
+        # 2. Baixa o histórico
+        df = ticker.history(start=start, end=end)
 
         if df.empty:
             print(f"Nenhum dado encontrado para {symbol} no período.")
             return
 
-        # Garantir que o diretório de saída (data/01_raw) exista
+        # 3. Transforma o índice (Date) em uma coluna regular 'Date'
+        df.reset_index(inplace=True)
+
+        # 4. Formata a data (remove fuso horário se houver)
+        df["Date"] = pd.to_datetime(df["Date"]).dt.date
+
+        # 5. Remove colunas que não usaremos (ex: 'Dividends')
+        cols_to_keep = ["Date", "Open", "High", "Low", "Close", "Volume"]
+
+        # Filtra o DataFrame para manter apenas as colunas existentes na lista
+        df_cleaned = df[[col for col in cols_to_keep if col in df.columns]]
+
+        # Garantir que o diretório de saída exista
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-        # Salvar os dados brutos em CSV
-        df.to_csv(output_path)
+        # 6. Salvar o CSV limpo (sem índice do pandas)
+        df_cleaned.to_csv(output_path, index=False)
 
         print(f"Dados salvos com sucesso em: {output_path}")
-        print(f"Total de {len(df)} registros baixados.")
+        print(f"Total de {len(df_cleaned)} registros baixados.")
 
     except Exception as e:
         print(f"Erro ao baixar os dados: {e}")
@@ -57,10 +71,6 @@ def download_stock_data(symbol: str, start: str, end: str, output_path: str):
 # --- Execução do Script ---
 
 if __name__ == "__main__":
-    """
-    Ponto de entrada do script.
-    Isso permite que o script seja executado diretamente.
-    """
     download_stock_data(
         symbol=SYMBOL, start=START_DATE, end=END_DATE, output_path=RAW_DATA_PATH
     )

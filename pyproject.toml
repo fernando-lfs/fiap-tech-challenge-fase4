@@ -10,6 +10,9 @@ package-mode = false
 python = "^3.11"
 yfinance = "^0.2.66"
 panda = "^0.3.1"
+scikit-learn = "^1.7.2"
+numpy = "^2.3.4"
+joblib = "^1.5.2"
 
 
 [build-system]
