@@ -7,12 +7,14 @@ readme = "README.md"
 package-mode = false
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = ">=3.11,<3.15"
 yfinance = "^0.2.66"
 panda = "^0.3.1"
 scikit-learn = "^1.7.2"
 numpy = "^2.3.4"
 joblib = "^1.5.2"
+torch = "^2.9.1"
+matplotlib = "^3.10.7"
 
 
 [build-system]
