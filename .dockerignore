@@ -1,0 +1,12 @@
+# Ignorar ambiente virtual e cache
+.venv
+__pycache__
+*.pyc
+
+# Ignorar git
+.git
+
+# Ignorar dados brutos (apenas os modelos processados são necessários para a API)
+data/
+results/
+tests/
