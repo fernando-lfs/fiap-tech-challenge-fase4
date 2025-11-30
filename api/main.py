@@ -1,7 +1,10 @@
 import torch
 import joblib
 import numpy as np
-from fastapi import FastAPI, HTTPException
+import psutil
+import time
+import logging
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from typing import List
 import sys
@@ -12,7 +15,14 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.model import LSTMModel
 
-# --- Configurações e Carga de Artefatos ---
+# --- Configuração de Logs (Monitoramento) ---
+# Define o formato do log para facilitar a leitura no console do Docker
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger("API_MONITOR")
+
+# --- Configurações da API ---
 app = FastAPI(
     title="Tech Challenge LSTM API",
     description="API para previsão de preços de ações usando Deep Learning (PyTorch)",
@@ -29,6 +39,33 @@ model = None
 scaler = None
 
 
+# --- Middleware de Monitoramento de Performance ---
+@app.middleware("http")
+async def monitor_performance(request: Request, call_next):
+    """
+    Intercepta todas as requisições para medir o tempo de resposta (latência).
+    Essencial para identificar gargalos em produção.
+    """
+    start_time = time.time()
+
+    # Processa a requisição
+    response = await call_next(request)
+
+    # Calcula o tempo total gasto
+    process_time = time.time() - start_time
+
+    # Registra no log: Caminho, Método, Status Code e Tempo de Resposta
+    logger.info(
+        f"Path: {request.url.path} | "
+        f"Method: {request.method} | "
+        f"Status: {response.status_code} | "
+        f"Latency: {process_time:.4f}s"
+    )
+
+    return response
+
+
+# --- Carga de Artefatos ---
 @app.on_event("startup")
 def load_artifacts():
     """
@@ -40,7 +77,7 @@ def load_artifacts():
     try:
         # 1. Carregar o Scaler
         scaler = joblib.load(SCALER_PATH)
-        print(f"[INFO] Scaler carregado de {SCALER_PATH}")
+        logger.info(f"Scaler carregado com sucesso de {SCALER_PATH}")
 
         # 2. Carregar a Arquitetura e os Pesos do Modelo
         # Precisamos instanciar a classe com os mesmos parâmetros do treino
@@ -48,10 +85,10 @@ def load_artifacts():
         model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
         model.to(DEVICE)
         model.eval()  # Importante: Coloca o modelo em modo de avaliação (desativa dropout, etc)
-        print(f"[INFO] Modelo carregado de {MODEL_PATH}")
+        logger.info(f"Modelo LSTM carregado com sucesso de {MODEL_PATH}")
 
     except Exception as e:
-        print(f"[ERRO] Falha ao carregar artefatos: {e}")
+        logger.error(f"Falha crítica ao carregar artefatos: {e}")
         raise e
 
 
@@ -65,8 +102,39 @@ class PredictionRequest(BaseModel):
 
 
 @app.get("/")
+def root():
+    """Endpoint raiz para verificação simples."""
+    return {
+        "message": "Tech Challenge LSTM API está online. Acesse /docs para documentação."
+    }
+
+
+@app.get("/health")
 def health_check():
-    return {"status": "ok", "message": "API LSTM está online"}
+    """
+    Monitoramento de Recursos.
+    Retorna o estado de saúde da aplicação e consumo de infraestrutura.
+    """
+    try:
+        cpu_usage = psutil.cpu_percent(interval=None)
+        memory_info = psutil.virtual_memory()
+
+        return {
+            "status": "healthy",
+            "server_time": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "resources": {
+                "cpu_usage_percent": cpu_usage,
+                "memory_usage_percent": memory_info.percent,
+                "memory_available_mb": memory_info.available // (1024 * 1024),
+            },
+            "components": {
+                "model_loaded": model is not None,
+                "scaler_loaded": scaler is not None,
+            },
+        }
+    except Exception as e:
+        logger.error(f"Erro no health check: {e}")
+        return {"status": "unhealthy", "detail": str(e)}
 
 
 @app.post("/predict")
@@ -81,8 +149,7 @@ def predict_next_day(request: PredictionRequest):
 
     input_data = request.last_prices
 
-    # Validação básica: Precisamos de pelo menos alguns dados para criar a sequência
-    # O tamanho ideal depende de como o modelo "olha" para trás, mas LSTMs aceitam tamanhos variáveis.
+    # Validação básica
     if len(input_data) < 10:
         raise HTTPException(
             status_code=400,
@@ -91,13 +158,10 @@ def predict_next_day(request: PredictionRequest):
 
     try:
         # 1. Pré-processamento: Normalizar os dados de entrada
-        # O scaler espera formato 2D (n_samples, n_features)
         input_array = np.array(input_data).reshape(-1, 1)
         input_scaled = scaler.transform(input_array)
 
         # 2. Preparação para o PyTorch
-        # Formato esperado pela LSTM: (batch_size, sequence_length, input_size)
-        # Criamos um batch de tamanho 1
         sequence = (
             torch.tensor(input_scaled, dtype=torch.float32).unsqueeze(0).to(DEVICE)
         )
@@ -107,7 +171,6 @@ def predict_next_day(request: PredictionRequest):
             prediction_scaled = model(sequence)
 
         # 4. Pós-processamento: Desnormalizar o resultado
-        # prediction_scaled é um tensor, precisamos converter para numpy
         prediction_scaled_np = prediction_scaled.cpu().numpy()
         prediction_value = scaler.inverse_transform(prediction_scaled_np)
 
@@ -117,4 +180,5 @@ def predict_next_day(request: PredictionRequest):
         }
 
     except Exception as e:
+        logger.error(f"Erro na predição: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erro na predição: {str(e)}")
