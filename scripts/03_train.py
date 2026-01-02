@@ -1,3 +1,6 @@
+import pytorch_lightning as pl
+from pytorch_lightning.loggers import MLFlowLogger
+from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -5,129 +8,166 @@ from torch.utils.data import DataLoader
 import numpy as np
 import os
 import sys
+import mlflow
 from scripts import logger
 
-# Adicionando o diretório raiz ao path para conseguir importar os módulos de 'src'
+# Adiciona diretório raiz ao path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.dataset import TimeSeriesDataset
 from src.model import LSTMModel
 
 # ==========================================
-# CONFIGURAÇÕES E HIPERPARÂMETROS
+# CONFIGURAÇÕES
 # ==========================================
-# Hiperparâmetros são ajustes manuais que definem como a rede aprende
-SEQ_LENGTH = 60  # Tamanho da janela (dias anteriores usados para prever)
-BATCH_SIZE = 32  # Quantas amostras processar antes de atualizar os pesos
-HIDDEN_SIZE = 64  # Quantidade de neurônios na camada oculta da LSTM
-NUM_LAYERS = 2  # Quantidade de camadas LSTM empilhadas
-LEARNING_RATE = 0.001  # Taxa de aprendizado (tamanho do passo do otimizador)
-NUM_EPOCHS = 50  # Quantas vezes o modelo verá o dataset completo
+EXPERIMENT_NAME = "Experimento_LSTM_CMIG4"
+RUN_NAME = "Treino_Lightning_Padrao"
 
-# Caminhos dos arquivos (baseado no progresso.txt)
+PARAMS = {
+    "seq_length": 60,
+    "batch_size": 32,
+    "hidden_size": 64,
+    "num_layers": 2,
+    "learning_rate": 0.001,
+    "num_epochs": 50,
+}
+
+# Caminhos
 DATA_DIR = os.path.join("data", "02_processed")
 TRAIN_PATH = os.path.join(DATA_DIR, "train_scaled.npy")
 VALID_PATH = os.path.join(DATA_DIR, "valid_scaled.npy")
+# Caminho para salvar o modelo compatível com a API
 MODEL_SAVE_PATH = os.path.join("models", "lstm_model.pth")
 
 
+# ==========================================
+# LIGHTNING MODULE
+# ==========================================
+class LSTMLightningModule(pl.LightningModule):
+    """
+    Wrapper do PyTorch Lightning para organizar o treino.
+    """
+
+    def __init__(self, hidden_size, num_layers, learning_rate):
+        super().__init__()
+        self.save_hyperparameters()  # Salva hparams automaticamente no MLflow/Checkpoint
+        self.learning_rate = learning_rate
+
+        # Instancia a arquitetura original (definida em src/model.py)
+        self.model = LSTMModel(
+            input_size=1, hidden_size=hidden_size, num_layers=num_layers
+        )
+        self.criterion = nn.MSELoss()
+
+    def forward(self, x):
+        return self.model(x)
+
+    def training_step(self, batch, batch_idx):
+        inputs, targets = batch
+        outputs = self(inputs)
+        loss = self.criterion(outputs, targets)
+
+        # Log automático (step-level)
+        self.log(
+            "train_loss", loss, on_step=False, on_epoch=True, prog_bar=True, logger=True
+        )
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        inputs, targets = batch
+        outputs = self(inputs)
+        loss = self.criterion(outputs, targets)
+
+        # Log automático (epoch-level)
+        self.log(
+            "valid_loss", loss, on_step=False, on_epoch=True, prog_bar=True, logger=True
+        )
+        return loss
+
+    def configure_optimizers(self):
+        return optim.Adam(self.parameters(), lr=self.learning_rate)
+
+
+# ==========================================
+# PIPELINE DE EXECUÇÃO
+# ==========================================
 def train():
-    logger.info("=== Iniciando Configuração de Treinamento ===")
+    logger.info("=== Iniciando Treinamento com PyTorch Lightning + MLflow ===")
 
-    # 1. Verificação de Dispositivo (GPU vs CPU)
-    # Se você tiver uma placa NVIDIA configurada com CUDA, o PyTorch usará ela.
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    logger.info(f"Dispositivo de processamento: {device}")
-
-    # 2. Carregamento dos Dados
-    logger.info("Carregando dados...")
+    # 1. Carregar Dados
     try:
         train_data = np.load(TRAIN_PATH)
         valid_data = np.load(VALID_PATH)
     except FileNotFoundError:
-        logger.error(
-            f"Erro: Arquivos .npy não encontrados em {DATA_DIR}. Execute o preprocessamento primeiro."
-        )
+        logger.error("Dados .npy não encontrados.")
         return
 
-    # 3. Preparação dos DataLoaders
-    # Transformamos os arrays numpy em Datasets PyTorch prontos para LSTMs
-    train_dataset = TimeSeriesDataset(train_data, seq_length=SEQ_LENGTH)
-    valid_dataset = TimeSeriesDataset(valid_data, seq_length=SEQ_LENGTH)
+    train_dataset = TimeSeriesDataset(train_data, seq_length=PARAMS["seq_length"])
+    valid_dataset = TimeSeriesDataset(valid_data, seq_length=PARAMS["seq_length"])
 
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-    valid_loader = DataLoader(valid_dataset, batch_size=BATCH_SIZE, shuffle=False)
+    train_loader = DataLoader(
+        train_dataset, batch_size=PARAMS["batch_size"], shuffle=True, num_workers=0
+    )
+    valid_loader = DataLoader(
+        valid_dataset, batch_size=PARAMS["batch_size"], shuffle=False, num_workers=0
+    )
 
-    logger.info(f"Tamanho do Treino: {len(train_dataset)} amostras")
-    logger.info(f"Tamanho da Validação: {len(valid_dataset)} amostras")
+    # 2. Configurar Logger do MLflow
+    mlf_logger = MLFlowLogger(experiment_name=EXPERIMENT_NAME, run_name=RUN_NAME)
+    mlf_logger.log_hyperparams(PARAMS)  # Registra parâmetros iniciais
 
-    # 4. Inicialização do Modelo, Loss e Otimizador
-    model = LSTMModel(input_size=1, hidden_size=HIDDEN_SIZE, num_layers=NUM_LAYERS)
-    model = model.to(device)  # Move o modelo para a GPU se disponível
+    # 3. Callbacks (Boas práticas de Engenharia)
+    checkpoint_callback = ModelCheckpoint(
+        monitor="valid_loss",
+        dirpath="models/checkpoints",
+        filename="best-checkpoint",
+        save_top_k=1,
+        mode="min",
+    )
 
-    criterion = nn.MSELoss()  # Mean Squared Error
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+    # Early Stopping: Para se a validação não melhorar por 10 épocas
+    early_stop_callback = EarlyStopping(
+        monitor="valid_loss", patience=10, verbose=True, mode="min"
+    )
 
-    # 5. Loop de Treinamento
-    logger.info("\n=== Iniciando Loop de Treinamento ===")
-    best_valid_loss = float("inf")  # Para salvar o melhor modelo
+    # 4. Inicializar Modelo Lightning
+    model_system = LSTMLightningModule(
+        hidden_size=PARAMS["hidden_size"],
+        num_layers=PARAMS["num_layers"],
+        learning_rate=PARAMS["learning_rate"],
+    )
 
-    for epoch in range(NUM_EPOCHS):
-        # --- FASE DE TREINO ---
-        model.train()  # Coloca o modelo em modo de treino (ativa dropout, etc.)
-        train_loss = 0.0
+    # 5. Trainer (Gerencia o loop, GPU e logs)
+    trainer = pl.Trainer(
+        max_epochs=PARAMS["num_epochs"],
+        logger=mlf_logger,
+        callbacks=[checkpoint_callback, early_stop_callback],
+        accelerator="auto",  # Detecta GPU/CPU automaticamente
+        devices=1,
+        log_every_n_steps=5,
+    )
 
-        for inputs, targets in train_loader:
-            inputs, targets = inputs.to(device), targets.to(device)
+    # 6. Executar Treino
+    trainer.fit(model_system, train_loader, valid_loader)
 
-            # Resetar gradientes (obrigatório no PyTorch antes de calcular novos)
-            optimizer.zero_grad()
+    logger.info(f"Melhor loss de validação: {checkpoint_callback.best_model_score}")
+    logger.info(f"Checkpoint salvo em: {checkpoint_callback.best_model_path}")
 
-            # Forward Pass (Previsão)
-            outputs = model(inputs)
+    # 7. EXPORTAÇÃO PARA API (Compatibilidade)
+    # Carregamos o melhor checkpoint gerado pelo Lightning
+    best_model = LSTMLightningModule.load_from_checkpoint(
+        checkpoint_callback.best_model_path
+    )
 
-            # Calcular Erro
-            loss = criterion(outputs, targets)
+    # Salvamos apenas os pesos da rede neural interna (architecture) para usar na API
+    # Isso evita que tenhamos que instalar Lightning dentro do container da API se não quisermos
+    torch.save(best_model.model.state_dict(), MODEL_SAVE_PATH)
+    logger.info(f"Modelo compatível com API salvo em: {MODEL_SAVE_PATH}")
 
-            # Backward Pass (Cálculo dos Gradientes - "culpa" de cada peso no erro)
-            loss.backward()
-
-            # Atualizar Pesos (Otimização)
-            optimizer.step()
-
-            train_loss += loss.item()
-
-        avg_train_loss = train_loss / len(train_loader)
-
-        # --- FASE DE VALIDAÇÃO ---
-        model.eval()  # Coloca o modelo em modo de avaliação (trava pesos)
-        valid_loss = 0.0
-
-        with torch.no_grad():  # Desliga o cálculo de gradientes (economiza memória/processamento)
-            for inputs, targets in valid_loader:
-                inputs, targets = inputs.to(device), targets.to(device)
-                outputs = model(inputs)
-                loss = criterion(outputs, targets)
-                valid_loss += loss.item()
-
-        avg_valid_loss = valid_loss / len(valid_loader)
-
-        # Log de progresso a cada 5 épocas
-        if (epoch + 1) % 5 == 0:
-            logger.info(
-                f"Epoch [{epoch+1}/{NUM_EPOCHS}] | Train Loss: {avg_train_loss:.6f} | Valid Loss: {avg_valid_loss:.6f}"
-            )
-
-        # Checkpoint: Salvar o modelo se ele for o melhor até agora
-        # Isso evita que fiquemos com um modelo que "decorou" demais (overfitting) no final
-        if avg_valid_loss < best_valid_loss:
-            best_valid_loss = avg_valid_loss
-            torch.save(model.state_dict(), MODEL_SAVE_PATH)
-            # logger.info(" -> Modelo salvo (Melhor Validação)")
-
-    logger.info("=" * 40)
-    logger.info(f"Treinamento concluído! Melhor Valid Loss: {best_valid_loss:.6f}")
-    logger.info(f"Modelo salvo em: {MODEL_SAVE_PATH}")
+    # Log do artefato final no MLflow
+    mlf_logger.experiment.log_artifact(
+        mlf_logger.run_id, MODEL_SAVE_PATH, artifact_path="model_pth"
+    )
 
 
 if __name__ == "__main__":
