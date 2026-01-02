@@ -23,7 +23,8 @@ from src.model import LSTMModel
 EXPERIMENT_NAME = "Experimento_LSTM_CMIG4"
 RUN_NAME = "Treino_Lightning_Padrao"
 
-PARAMS = {
+# Parâmetros Padrão (Imutáveis)
+DEFAULT_PARAMS = {
     "seq_length": 60,
     "batch_size": 32,
     "hidden_size": 64,
@@ -31,6 +32,9 @@ PARAMS = {
     "learning_rate": 0.001,
     "num_epochs": 50,
 }
+
+# Parâmetros Atuais (Podem ser alterados pela API em tempo de execução)
+CURRENT_PARAMS = DEFAULT_PARAMS.copy()
 
 # Caminhos
 DATA_DIR = os.path.join("data", "02_processed")
@@ -91,10 +95,26 @@ class LSTMLightningModule(pl.LightningModule):
 # ==========================================
 # PIPELINE DE EXECUÇÃO
 # ==========================================
-def train():
+def train(override_params: dict = None):
+    """
+    Executa o pipeline de treinamento.
+    Args:
+        override_params (dict): Dicionário com novos hiperparâmetros vindos da API.
+    """
     logger.info("=== Iniciando Treinamento com PyTorch Lightning + MLflow ===")
 
-    # 1. Carregar Dados
+    # 1. Configuração Dinâmica de Parâmetros
+    # Começa com os parâmetros atuais globais
+    params = CURRENT_PARAMS.copy()
+
+    # Se a API enviou overrides, atualiza os parâmetros para ESTA execução
+    if override_params:
+        params.update(override_params)
+        logger.info(f"Parâmetros sobrescritos para este run: {override_params}")
+
+    logger.info(f"Parâmetros em uso: {params}")
+
+    # 2. Carregar Dados
     try:
         train_data = np.load(TRAIN_PATH)
         valid_data = np.load(VALID_PATH)
@@ -102,21 +122,25 @@ def train():
         logger.error("Dados .npy não encontrados.")
         return
 
-    train_dataset = TimeSeriesDataset(train_data, seq_length=PARAMS["seq_length"])
-    valid_dataset = TimeSeriesDataset(valid_data, seq_length=PARAMS["seq_length"])
+    # Usa params['seq_length'] dinamicamente
+    train_dataset = TimeSeriesDataset(train_data, seq_length=int(params["seq_length"]))
+    valid_dataset = TimeSeriesDataset(valid_data, seq_length=int(params["seq_length"]))
 
     train_loader = DataLoader(
-        train_dataset, batch_size=PARAMS["batch_size"], shuffle=True, num_workers=0
+        train_dataset, batch_size=int(params["batch_size"]), shuffle=True, num_workers=0
     )
     valid_loader = DataLoader(
-        valid_dataset, batch_size=PARAMS["batch_size"], shuffle=False, num_workers=0
+        valid_dataset,
+        batch_size=int(params["batch_size"]),
+        shuffle=False,
+        num_workers=0,
     )
 
-    # 2. Configurar Logger do MLflow
+    # 3. Configurar Logger do MLflow
     mlf_logger = MLFlowLogger(experiment_name=EXPERIMENT_NAME, run_name=RUN_NAME)
-    mlf_logger.log_hyperparams(PARAMS)  # Registra parâmetros iniciais
+    mlf_logger.log_hyperparams(params)  # Registra parâmetros efetivos
 
-    # 3. Callbacks (Boas práticas de Engenharia)
+    # 4. Callbacks (Boas práticas de Engenharia)
     checkpoint_callback = ModelCheckpoint(
         monitor="valid_loss",
         dirpath="models/checkpoints",
@@ -125,21 +149,21 @@ def train():
         mode="min",
     )
 
-    # Early Stopping: Para se a validação não melhorar por 10 épocas
+    # Early Stopping
     early_stop_callback = EarlyStopping(
         monitor="valid_loss", patience=10, verbose=True, mode="min"
     )
 
-    # 4. Inicializar Modelo Lightning
+    # 5. Inicializar Modelo Lightning (Usa parâmetros dinâmicos)
     model_system = LSTMLightningModule(
-        hidden_size=PARAMS["hidden_size"],
-        num_layers=PARAMS["num_layers"],
-        learning_rate=PARAMS["learning_rate"],
+        hidden_size=int(params["hidden_size"]),
+        num_layers=int(params["num_layers"]),
+        learning_rate=float(params["learning_rate"]),
     )
 
-    # 5. Trainer (Gerencia o loop, GPU e logs)
+    # 6. Trainer
     trainer = pl.Trainer(
-        max_epochs=PARAMS["num_epochs"],
+        max_epochs=int(params["num_epochs"]),
         logger=mlf_logger,
         callbacks=[checkpoint_callback, early_stop_callback],
         accelerator="auto",  # Detecta GPU/CPU automaticamente
@@ -147,20 +171,17 @@ def train():
         log_every_n_steps=5,
     )
 
-    # 6. Executar Treino
+    # 7. Executar Treino
     trainer.fit(model_system, train_loader, valid_loader)
 
     logger.info(f"Melhor loss de validação: {checkpoint_callback.best_model_score}")
     logger.info(f"Checkpoint salvo em: {checkpoint_callback.best_model_path}")
 
-    # 7. EXPORTAÇÃO PARA API (Compatibilidade)
-    # Carregamos o melhor checkpoint gerado pelo Lightning
+    # 8. EXPORTAÇÃO PARA API
     best_model = LSTMLightningModule.load_from_checkpoint(
         checkpoint_callback.best_model_path
     )
 
-    # Salvamos apenas os pesos da rede neural interna (architecture) para usar na API
-    # Isso evita que tenhamos que instalar Lightning dentro do container da API se não quisermos
     torch.save(best_model.model.state_dict(), MODEL_SAVE_PATH)
     logger.info(f"Modelo compatível com API salvo em: {MODEL_SAVE_PATH}")
 
