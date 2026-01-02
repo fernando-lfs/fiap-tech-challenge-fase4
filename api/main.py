@@ -3,33 +3,28 @@ import joblib
 import numpy as np
 import psutil
 import time
-import logging
+import sys
+import os
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from typing import List
-import sys
-import os
 
-# Adiciona o diretório raiz ao path para conseguir importar 'src.model'
+# Adiciona o diretório raiz ao path para garantir importação de 'src' e 'api'
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.model import LSTMModel
 
-# --- Configuração de Logs (Monitoramento) ---
-# Define o formato do log para facilitar a leitura no console do Docker
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger("API_MONITOR")
+# Importa logger e metadados centralizados do __init__.py
+from api import logger, __app__, __version__
 
 # --- Configurações da API ---
 app = FastAPI(
-    title="Tech Challenge LSTM API",
+    title=__app__,  # Usa o nome definido no __init__.py
     description="API para previsão de preços de ações usando Deep Learning (PyTorch)",
-    version="1.0.0",
+    version=__version__,  # Usa a versão definida no __init__.py
 )
 
-# Caminhos dos arquivos (baseados na estrutura do progresso.txt)
+# Caminhos dos arquivos
 MODEL_PATH = "models/lstm_model.pth"
 SCALER_PATH = "models/scaler.joblib"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -54,7 +49,7 @@ async def monitor_performance(request: Request, call_next):
     # Calcula o tempo total gasto
     process_time = time.time() - start_time
 
-    # Registra no log: Caminho, Método, Status Code e Tempo de Resposta
+    # Registra no log centralizado
     logger.info(
         f"Path: {request.url.path} | "
         f"Method: {request.method} | "
@@ -80,15 +75,16 @@ def load_artifacts():
         logger.info(f"Scaler carregado com sucesso de {SCALER_PATH}")
 
         # 2. Carregar a Arquitetura e os Pesos do Modelo
-        # Precisamos instanciar a classe com os mesmos parâmetros do treino
+        # Deve-se instanciar a classe com os mesmos parâmetros do treino
         model = LSTMModel(input_size=1, hidden_size=64, num_layers=2)
         model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
         model.to(DEVICE)
-        model.eval()  # Importante: Coloca o modelo em modo de avaliação (desativa dropout, etc)
+        model.eval()  # Importante: Coloca o modelo em modo de avaliação
         logger.info(f"Modelo LSTM carregado com sucesso de {MODEL_PATH}")
 
     except Exception as e:
         logger.error(f"Falha crítica ao carregar artefatos: {e}")
+        # Em produção, pode ser interessante impedir o start se o modelo falhar
         raise e
 
 
@@ -105,7 +101,9 @@ class PredictionRequest(BaseModel):
 def root():
     """Endpoint raiz para verificação simples."""
     return {
-        "message": "Tech Challenge LSTM API está online. Acesse /docs para documentação."
+        "app": __app__,
+        "version": __version__,
+        "message": "Tech Challenge LSTM API está online. Acesse /docs para documentação.",
     }
 
 
@@ -174,9 +172,15 @@ def predict_next_day(request: PredictionRequest):
         prediction_scaled_np = prediction_scaled.cpu().numpy()
         prediction_value = scaler.inverse_transform(prediction_scaled_np)
 
+        result_value = float(prediction_value[0][0])
+
+        logger.info(
+            f"Predição realizada. Input size: {len(input_data)} | Output: {result_value:.2f}"
+        )
+
         return {
             "input_days": len(input_data),
-            "predicted_price": float(prediction_value[0][0]),
+            "predicted_price": result_value,
         }
 
     except Exception as e:

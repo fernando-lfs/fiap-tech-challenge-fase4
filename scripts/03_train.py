@@ -5,6 +5,7 @@ from torch.utils.data import DataLoader
 import numpy as np
 import os
 import sys
+from scripts import logger
 
 # Adicionando o diretório raiz ao path para conseguir importar os módulos de 'src'
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -31,20 +32,20 @@ MODEL_SAVE_PATH = os.path.join("models", "lstm_model.pth")
 
 
 def train():
-    print("=== Iniciando Configuração de Treinamento ===")
+    logger.info("=== Iniciando Configuração de Treinamento ===")
 
     # 1. Verificação de Dispositivo (GPU vs CPU)
     # Se você tiver uma placa NVIDIA configurada com CUDA, o PyTorch usará ela.
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Dispositivo de processamento: {device}")
+    logger.info(f"Dispositivo de processamento: {device}")
 
     # 2. Carregamento dos Dados
-    print("Carregando dados...")
+    logger.info("Carregando dados...")
     try:
         train_data = np.load(TRAIN_PATH)
         valid_data = np.load(VALID_PATH)
     except FileNotFoundError:
-        print(
+        logger.error(
             f"Erro: Arquivos .npy não encontrados em {DATA_DIR}. Execute o preprocessamento primeiro."
         )
         return
@@ -57,8 +58,8 @@ def train():
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
     valid_loader = DataLoader(valid_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
-    print(f"Tamanho do Treino: {len(train_dataset)} amostras")
-    print(f"Tamanho da Validação: {len(valid_dataset)} amostras")
+    logger.info(f"Tamanho do Treino: {len(train_dataset)} amostras")
+    logger.info(f"Tamanho da Validação: {len(valid_dataset)} amostras")
 
     # 4. Inicialização do Modelo, Loss e Otimizador
     model = LSTMModel(input_size=1, hidden_size=HIDDEN_SIZE, num_layers=NUM_LAYERS)
@@ -68,7 +69,7 @@ def train():
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
     # 5. Loop de Treinamento
-    print("\n=== Iniciando Loop de Treinamento ===")
+    logger.info("\n=== Iniciando Loop de Treinamento ===")
     best_valid_loss = float("inf")  # Para salvar o melhor modelo
 
     for epoch in range(NUM_EPOCHS):
@@ -113,7 +114,7 @@ def train():
 
         # Log de progresso a cada 5 épocas
         if (epoch + 1) % 5 == 0:
-            print(
+            logger.info(
                 f"Epoch [{epoch+1}/{NUM_EPOCHS}] | Train Loss: {avg_train_loss:.6f} | Valid Loss: {avg_valid_loss:.6f}"
             )
 
@@ -122,11 +123,11 @@ def train():
         if avg_valid_loss < best_valid_loss:
             best_valid_loss = avg_valid_loss
             torch.save(model.state_dict(), MODEL_SAVE_PATH)
-            # print(" -> Modelo salvo (Melhor Validação)")
+            # logger.info(" -> Modelo salvo (Melhor Validação)")
 
-    print("=" * 40)
-    print(f"Treinamento concluído! Melhor Valid Loss: {best_valid_loss:.6f}")
-    print(f"Modelo salvo em: {MODEL_SAVE_PATH}")
+    logger.info("=" * 40)
+    logger.info(f"Treinamento concluído! Melhor Valid Loss: {best_valid_loss:.6f}")
+    logger.info(f"Modelo salvo em: {MODEL_SAVE_PATH}")
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ import numpy as np
 from sklearn.preprocessing import MinMaxScaler
 import os
 import joblib
+from scripts import logger
 
 # --- Configurações ---
 SYMBOL = "CMIG4.SA"
@@ -40,20 +41,20 @@ def load_data(path: str) -> pd.DataFrame:
         # Seleciona apenas a coluna de interesse
         df_feature = df[[FEATURE_COLUMN]]
 
-        print(f"Dados brutos carregados: {len(df_feature)} registros.")
+        logger.info(f"Dados brutos carregados: {len(df_feature)} registros.")
         return df_feature
 
     except FileNotFoundError:
-        print(f"Erro: Arquivo não encontrado em {path}")
+        logger.error(f"Erro: Arquivo não encontrado em {path}")
         return pd.DataFrame()
     except KeyError as e:
-        print(
+        logger.error(
             f"Erro: Coluna 'Date' ou '{FEATURE_COLUMN}' "
             f"não encontrada em {path}. {e}"
         )
         return pd.DataFrame()
     except Exception as e:
-        print(f"Erro inesperado ao carregar dados: {e}")
+        logger.error(f"Erro inesperado ao carregar dados: {e}")
         return pd.DataFrame()
 
 
@@ -63,7 +64,7 @@ def preprocess_data(df: pd.DataFrame):
     Salva os dados processados e o scaler.
     """
     if df.empty:
-        print("DataFrame vazio. Abortando pré-processamento.")
+        logger.error("DataFrame vazio. Abortando pré-processamento.")
         return
 
     # 1. Divisão Cronológica
@@ -75,7 +76,7 @@ def preprocess_data(df: pd.DataFrame):
     valid_data = df.iloc[train_end:valid_end]
     test_data = df.iloc[valid_end:]
 
-    print(
+    logger.info(
         f"Divisão: Treino ({len(train_data)}), "
         f"Validação ({len(valid_data)}), "
         f"Teste ({len(test_data)})"
@@ -100,7 +101,7 @@ def preprocess_data(df: pd.DataFrame):
     # Salvar o scaler.
     # OBS.: Ele será essencial na API para processar novas entradas e inverter a previsão
     joblib.dump(scaler, SCALER_PATH)
-    print(f"Scaler salvo em: {SCALER_PATH}")
+    logger.info(f"Scaler salvo em: {SCALER_PATH}")
 
     # Salvamos os dados como arrays numpy (.npy)
     # OBS.: Este formato é eficiente para carregar no PyTorch.
@@ -108,7 +109,7 @@ def preprocess_data(df: pd.DataFrame):
     np.save(VALID_PATH, valid_scaled)
     np.save(TEST_PATH, test_scaled)
 
-    print(f"Dados processados salvos em: {PROCESSED_DATA_DIR}")
+    logger.info(f"Dados processados salvos em: {PROCESSED_DATA_DIR}")
 
 
 # --- Execução do Script ---

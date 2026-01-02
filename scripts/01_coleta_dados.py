@@ -1,6 +1,7 @@
 import yfinance as yf
 import pandas as pd
 import os
+from scripts import logger
 
 # --- Configurações Iniciais ---
 
@@ -29,8 +30,8 @@ def download_stock_data(symbol: str, start: str, end: str, output_path: str):
         end (str): Data de fim (YYYY-MM-DD).
         output_path (str): Caminho completo para salvar o .csv.
     """
-    print(f"Iniciando download dos dados para {symbol}...")
-    print(f"Período: {start} até {end}")
+    logger.info("Iniciando download dos dados para {symbol}...")
+    logger.info(f"Período: {start} até {end}")
 
     try:
         # 1. Cria o objeto Ticker
@@ -61,11 +62,11 @@ def download_stock_data(symbol: str, start: str, end: str, output_path: str):
         # 6. Salvar o CSV limpo (sem índice do pandas)
         df_cleaned.to_csv(output_path, index=False)
 
-        print(f"Dados salvos com sucesso em: {output_path}")
-        print(f"Total de {len(df_cleaned)} registros baixados.")
+        logger.info(f"Dados salvos com sucesso em: {output_path}")
+        logger.info(f"Total de {len(df_cleaned)} registros baixados.")
 
     except Exception as e:
-        print(f"Erro ao baixar os dados: {e}")
+        logger.error(f"Erro ao baixar os dados: {e}")
 
 
 # --- Execução do Script ---

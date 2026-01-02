@@ -8,6 +8,7 @@ import joblib
 import os
 import sys
 from sklearn.metrics import mean_absolute_error, mean_squared_error
+from scripts import logger
 
 # Configuração de caminhos (para importar modules de src)
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -39,11 +40,11 @@ def calculate_mape(y_true, y_pred):
 
 
 def evaluate():
-    print("=== Iniciando Avaliação do Modelo ===")
+    logger.info("=== Iniciando Avaliação do Modelo ===")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # 1. Carregar Dados e Artefatos
-    print("Carregando dados de teste e scaler...")
+    logger.info("Carregando dados de teste e scaler...")
     test_data = np.load(TEST_PATH)
     scaler = joblib.load(SCALER_PATH)
 
@@ -52,7 +53,7 @@ def evaluate():
     test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
     # 2. Carregar o Modelo Treinado
-    print(f"Carregando modelo de {MODEL_PATH}...")
+    logger.info(f"Carregando modelo de {MODEL_PATH}...")
     model = LSTMModel(input_size=1, hidden_size=HIDDEN_SIZE, num_layers=NUM_LAYERS)
     model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
     model = model.to(device)
@@ -62,7 +63,7 @@ def evaluate():
     predictions = []
     actuals = []
 
-    print("Realizando previsões...")
+    logger.info("Realizando previsões...")
     with torch.no_grad():
         for inputs, targets in test_loader:
             inputs = inputs.to(device)
@@ -85,16 +86,16 @@ def evaluate():
     rmse = np.sqrt(mean_squared_error(actual_real, pred_real))
     mape = calculate_mape(actual_real, pred_real)
 
-    print("\n" + "=" * 30)
-    print("RESULTADOS FINAIS (DADOS DE TESTE)")
-    print("=" * 30)
-    print(f"MAE  (Erro Médio Absoluto): R$ {mae:.4f}")
-    print(f"RMSE (Raiz Erro Quadrático): R$ {rmse:.4f}")
-    print(f"MAPE (Erro Percentual): {mape:.4f}%")
-    print("=" * 30)
+    logger.info("\n" + "=" * 30)
+    logger.info("RESULTADOS FINAIS (DADOS DE TESTE)")
+    logger.info("=" * 30)
+    logger.info(f"MAE  (Erro Médio Absoluto): R$ {mae:.4f}")
+    logger.info(f"RMSE (Raiz Erro Quadrático): R$ {rmse:.4f}")
+    logger.info(f"MAPE (Erro Percentual): {mape:.4f}%")
+    logger.info("=" * 30)
 
     # 6. Visualização (Gráfico)
-    print("Gerando gráfico comparativo...")
+    logger.info("Gerando gráfico comparativo...")
     plt.figure(figsize=(12, 6))
     plt.plot(actual_real, label="Preço Real", color="blue", alpha=0.7)
     plt.plot(pred_real, label="Previsão LSTM", color="red", alpha=0.7)
@@ -106,8 +107,8 @@ def evaluate():
 
     plot_path = os.path.join(RESULTS_DIR, "prediction_plot.png")
     plt.savefig(plot_path)
-    print(f"Gráfico salvo em: {plot_path}")
-    print("Avaliação Concluída.")
+    logger.info(f"Gráfico salvo em: {plot_path}")
+    logger.info("Avaliação Concluída.")
 
 
 if __name__ == "__main__":
