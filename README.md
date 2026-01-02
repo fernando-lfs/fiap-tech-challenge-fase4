@@ -1,169 +1,217 @@
-# 📈 Tech Challenge - Fase 4: Previsão de Ações com LSTM
+# 📈 Tech Challenge - Fase 4: Previsão de Ações com MLOps
 
 > **Deep Learning & AI - FIAP**
 
-Este projeto consiste em uma solução completa de *End-to-End Machine Learning* para prever o preço de fechamento de ações da **CEMIG (CMIG4.SA)**. A solução abrange desde a coleta e pré-processamento de dados financeiros até o treinamento de uma rede neural **LSTM (Long Short-Term Memory)** com **PyTorch**, disponibilizando o modelo final através de uma API **FastAPI** containerizada com **Docker**.
+Este projeto consiste em uma solução completa de **End-to-End Machine Learning** para prever o preço de fechamento de ações da **CEMIG (CMIG4.SA)**.
+
+A solução evoluiu de um modelo preditivo simples para um **Sistema de MLOps robusto**, integrando:
+
+* Redes Neurais **LSTM** (Long Short-Term Memory) com **PyTorch Lightning**.
+* Rastreamento de Experimentos com **MLflow**.
+* API de Inferência **FastAPI** com suporte a **Treinamento Assíncrono**.
+* Monitoramento de **Data Drift** (Desvio de Dados) em tempo real.
+* Containerização completa via **Docker**.
 
 ---
 
 ## 🚀 Funcionalidades Principais
 
-* **Coleta Automática:** Script para download e limpeza de dados históricos via `yfinance`.
-* **Processamento de Séries Temporais:** Normalização e criação de janelas deslizantes para treinamento supervisionado.
-* **Deep Learning:** Modelo LSTM implementado em PyTorch para capturar dependências temporais de longo prazo.
-* **API RESTful:** Interface web rápida (FastAPI) para inferência em tempo real.
-* **Monitoramento:** Endpoints de saúde (`/health`) com métricas de uso de recursos (CPU/Memória) e latência.
-* **Reprodutibilidade:** Ambiente isolado via Docker.
+* **Coleta & Baseline:** Download automático via `yfinance` e geração de estatísticas descritivas para detecção de anomalias.
+* **Treinamento Padronizado:** Pipeline utilizando `PyTorch Lightning` para organizar loops de treino/validação e `EarlyStopping`.
+* **Rastreamento (Tracking):** Registro automático de hiperparâmetros, métricas (Loss, MAPE) e artefatos (modelos `.pth`, gráficos) via **MLflow**.
+* **API Gerenciável:** Interface RESTful que permite não apenas prever, mas também disparar **retreinos em background** e atualizar configurações dinamicamente.
+* **Observabilidade de Dados:** O endpoint de predição detecta automaticamente **Data Drift** (mudanças bruscas de padrão ou volatilidade) comparando a entrada com o baseline de treino.
+* **Escalabilidade:** Arquitetura desenhada para execução em containers e orquestração.
 
 ---
 
 ## 🛠️ Stack Tecnológico
 
-O projeto foi desenvolvido utilizando as seguintes tecnologias e bibliotecas:
-
 * **Linguagem:** Python 3.11
-* **Gerenciamento de Dependências:** Poetry
-* **Machine Learning:** PyTorch, Scikit-Learn, Numpy, Pandas
-* **API Framework:** FastAPI, Uvicorn
-* **Containerização:** Docker
-* **Fonte de Dados:** Yahoo Finance (yfinance)
+* **Gerenciamento:** Poetry
+* **Deep Learning:** PyTorch, PyTorch Lightning
+* **MLOps:** MLflow
+* **API:** FastAPI, Uvicorn, Pydantic
+* **Dados:** Pandas, Numpy, Scikit-Learn, Yahoo Finance
+* **Infraestrutura:** Docker
+
+---
+
+## 🏗️ Arquitetura e Decisões Técnicas (ADR)
+
+Para atender aos requisitos de qualidade de engenharia, as seguintes decisões foram tomadas:
+
+1. **PyTorch Lightning:** Adotado para remover *boilerplate code* (loops manuais) e padronizar o código de treinamento, facilitando a manutenção e a reprodutibilidade.
+2. **MLflow:** Escolhido como ferramenta de *Tracking* por ser agnóstico à infraestrutura (roda localmente ou na nuvem) e permitir versionamento claro de cada experimento.
+3. **FastAPI com BackgroundTasks:** Para o endpoint de treinamento (`/train`), utilizamos processamento assíncrono. Isso impede que uma requisição de treino bloqueie a API, mantendo-a responsiva para inferências simultâneas.
+4. **Detecção de Drift "In-App":** Optou-se por implementar um detector estatístico leve dentro da própria API (comparação com Baseline JSON). Isso garante monitoramento de qualidade imediato sem a complexidade/custo de ferramentas externas pesadas (como Evidently AI) para este escopo acadêmico.
 
 ---
 
 ## 📂 Estrutura do Projeto
 
-A organização de pastas segue princípios de modularidade para separar dados, código de modelagem, scripts de execução e a aplicação web.
-
 ```text
 /
-├── api/                  # Aplicação FastAPI (main.py)
-├── data/                 # Armazenamento de dados (brutos e processados)
-├── models/               # Artefatos binários (scaler.joblib, lstm_model.pth)
-├── results/              # Gráficos de performance e avaliação
-├── scripts/              # Pipelines de execução (coleta, treino, avaliação)
-├── src/                  # Código fonte reutilizável (classes do modelo e dataset)
-├── Dockerfile            # Receita para construção da imagem Docker
-├── pyproject.toml        # Gerenciador de dependências Poetry
-└── requirements.txt      # Dependências exportadas para o Docker
+├── api/                  # Aplicação Web e Logs Centralizados
+│   ├── main.py           # Endpoints (Train, Predict, Config)
+│   └── __init__.py       # Configuração de Logging
+├── data/                 # Data Lake (Raw e Processed)
+├── mlruns/               # Registro local do MLflow (Metadados dos experimentos)
+├── models/               # Artefatos: .pth, .joblib e baseline_stats.json
+├── results/              # Gráficos gerados
+├── scripts/              # Pipelines ETL e Treino
+│   ├── 01_coleta_dados.py
+│   ├── 02_preprocess.py  # Gera dados normalizados e Baseline de Drift
+│   ├── 03_train.py       # Treino com Lightning + MLflow
+│   └── 04_evaluate.py    # Avaliação em dados de teste
+├── src/                  # Código Fonte Reutilizável
+│   ├── dataset.py
+│   └── model.py
+├── Dockerfile
+├── pyproject.toml
+└── README.md
 ```
------
-
-## 📊 Performance do Modelo
-
-O modelo foi avaliado utilizando dados de teste (não vistos durante o treinamento), obtendo os seguintes resultados de precisão para a ação `CMIG4.SA`:
-
-| Métrica | Valor | Descrição |
-| :--- | :--- | :--- |
-| **MAPE** | **1.56%** | Erro Percentual Absoluto Médio |
-| **MAE** | 0.1614 | Erro Médio Absoluto (em R$) |
-| **RMSE** | 0.1996 | Raiz do Erro Quadrático Médio |
-
------
-
-## ⚡ Como Executar o Projeto
-
-Existem duas formas de executar a aplicação: via **Docker** (recomendado para produção/avaliação) ou **Localmente** (para desenvolvimento).
-
-### Opção 1: Via Docker
-
-Certifique-se de ter o Docker instalado em sua máquina.
-
-1.  **Construir a imagem:**
-
-    ```bash
-    docker build -t tech-challenge-lstm .
-    ```
-
-2.  **Rodar o container:**
-
-    ```bash
-    docker run -d -p 8000:8000 --name lstm-api tech-challenge-lstm
-    ```
-
-3.  **Acessar a API:**
-    Acesse a documentação automática em: `http://localhost:8000/docs`
-
------
-
-### Opção 2: Execução Local (Desenvolvimento)
-
-Pré-requisitos: Python 3.11+ e Poetry.
-
-1.  **Instalar dependências:**
-
-    ```bash
-    poetry install
-    ```
-
-2.  **Ativar o ambiente virtual:**
-
-    ```bash
-    poetry shell
-    ```
-
-3.  **Executar o Pipeline de Treinamento (Opcional):**
-    Caso queira retreinar o modelo do zero:
-
-    ```bash
-    python scripts/01_coleta_dados.py
-    python scripts/02_preprocess.py
-    python scripts/03_train.py
-    python scripts/04_evaluate.py
-    ```
-
-4.  **Subir a API:**
-
-    ```bash
-    uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
-    ```
-
------
-
-## 🔌 Utilização da API
-
-### 1\. Verificar Saúde do Sistema (`GET /health`)
-
-Retorna o status da API e consumo de recursos.
-
-**Exemplo de Resposta:**
-
-```json
-{
-  "status": "healthy",
-  "cpu": 1.5,
-  "memory": 12.4,
-  "model_loaded": true
-}
-```
-
-### 2\. Realizar Previsão (`POST /predict`)
-
-Recebe uma lista de preços de fechamento anteriores e retorna a previsão para o próximo dia.
-
-**Corpo da Requisição (JSON):**
-
-```json
-{
-  "last_prices": [12.50, 12.60, 12.55, 12.70, 12.80, ...] 
-}
-```
-
-> **Nota:** Certifique-se de enviar uma sequência de preços compatível com a janela de tempo utilizada no treinamento.
-
-**Exemplo de Resposta:**
-
-```json
-{
-  "predicted_price": 12.85
-}
-```
-
------
-
-## 👥 Autores
-
-- Fernando LFS — [GitHub](https://github.com/fernando-lfs) | [LinkedIn](https://www.linkedin.com/in/fernando-lfs/)
 
 ---
 
-> Projeto desenvolvido para o FIAP Tech Challenge — Fase 4.
+## 📈 Performance e Resultados
+
+O modelo final (LSTM com 2 camadas, 64 neurônios) atingiu os seguintes resultados nos dados de teste:
+
+| Métrica                    | Valor     |
+| -------------------------- | --------- |
+| **MAPE** (Erro Percentual) | **1.56%** |
+| **MAE** (Erro Absoluto)    | R$ 0.16   |
+| **RMSE** (Erro Quadrático) | R$ 0.19   |
+
+> **Nota:** Todos os gráficos de perda e métricas detalhadas podem ser visualizados via `mlflow ui`.
+
+---
+
+## ⚡ Como Executar o Projeto
+
+### Opção 1: Via Docker (Produção)
+
+1. **Construir a imagem:**
+   
+   ```bash
+   docker build -t lstm-mlops .
+   ```
+
+2. **Rodar o container:**
+   
+   ```bash
+   docker run -d -p 8000:8000 --name api-lstm lstm-mlops
+   ```
+
+3. **Acessar:**
+* Swagger UI: `http://localhost:8000/docs`
+
+---
+
+### Opção 2: Execução Local (Desenvolvimento & Experimentos)
+
+1. **Instalar dependências:**
+   
+   ```bash
+   poetry install
+   poetry shell
+   ```
+
+2. **Executar Pipeline Completo (ETL + Treino):**
+   
+   ```bash
+   # 1. Coleta e Preprocessamento (Gera baseline_stats.json)
+   python -m scripts.01_coleta_dados
+   python -m scripts.02_preprocess
+   # 2. Treinamento (Registra no MLflow)
+   python -m scripts.03_train
+   # 3. Avaliação
+   python -m scripts.04_evaluate
+   ```
+
+3. **Visualizar Experimentos (MLflow):**
+   
+   ```bash
+   mlflow ui
+   # Acesse [http://127.0.0.1:5000](http://127.0.0.1:5000) para ver gráficos e parâmetros
+   ```
+
+4. **Subir a API:**
+   
+   ```bash
+   uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+   ```
+
+---
+
+## 🔌 Documentação da API
+
+A API possui 5 endpoints principais para ciclo de vida completo do modelo.
+
+### 1. Inferência com Monitoramento (`POST /predict`)
+
+Realiza a previsão e verifica se há **Data Drift**.
+
+* **Input:** Lista de preços (float).
+* **Output:** Preço previsto e alerta de drift.
+
+```json
+// Resposta Exemplo
+{
+  "predicted_price": 12.85,
+  "drift_warning": true,
+  "drift_details": ["Alta volatilidade detectada (3x superior ao treino)."]
+}
+```
+
+### 2. Treinamento (`POST /train`)
+
+Dispara um novo treinamento em **background** (sem travar a API).
+
+* **Input (Opcional):** Hiperparâmetros para sobrescrever o padrão.
+
+```json
+{
+  "hyperparameters": {
+    "num_epochs": 10,
+    "learning_rate": 0.005
+  }
+}
+```
+
+### 3. Configuração (`GET/POST /config`)
+
+Lê ou atualiza os hiperparâmetros globais usados nos próximos treinos.
+
+### 4. Recarregar Modelo (`POST /model/reload`)
+
+Atualiza o modelo em memória (Hot Reload) após um retreino, sem reiniciar o servidor.
+
+### 5. Saúde (`GET /health`)
+
+Monitora CPU, Memória e disponibilidade dos artefatos.
+
+---
+
+## ☁️ Escalabilidade e Monitoramento (Proposta)
+
+Para garantir a elasticidade da solução em ambiente produtivo de alta demanda, propõe-se a seguinte arquitetura:
+
+1. **Horizontal Pod Autoscaler (HPA) no Kubernetes:**
+* Configuração de um HPA monitorando a métrica de **CPU** e **Latência**.
+* **Regra:** Se a utilização de CPU ultrapassar 70%, o Kubernetes inicia novas réplicas (Pods) da API automaticamente.
+2. **Desacoplamento de Treino:**
+* Em produção, o endpoint `/train` enviaria uma mensagem para uma fila (Redis/RabbitMQ).
+* Workers dedicados (Celery) consumiriam essa fila para treinar o modelo, evitando impacto na performance da inferência.
+3. **Monitoramento de Qualidade:**
+* O mecanismo de *Drift* atual gera logs estruturados (`WARNING`).
+* Ferramentas como **Fluentd** ou **Filebeat** coletariam esses logs para gerar alertas em dashboards (Grafana/Kibana) quando a taxa de drift excedesse um limiar seguro.
+
+---
+
+## 👥 Autores
+
+* Fernando LFS — [GitHub](https://github.com/fernando-lfs) | [LinkedIn](https://www.linkedin.com/in/fernando-lfs/)
+
+---
