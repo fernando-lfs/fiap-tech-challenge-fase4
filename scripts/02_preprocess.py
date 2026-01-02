@@ -3,6 +3,7 @@ import numpy as np
 from sklearn.preprocessing import MinMaxScaler
 import os
 import joblib
+import json
 from scripts import logger
 
 # --- Configurações ---
@@ -10,61 +11,57 @@ SYMBOL = "CMIG4.SA"
 FEATURE_COLUMN = "Close"  # Coluna alvo para a previsão
 TRAIN_RATIO = 0.7
 VALID_RATIO = 0.15
-# TEST_RATIO é 0.15 (calculado automaticamente)
+# TEST_RATIO é 0.15
 
 # --- Caminhos (Paths) ---
 BASE_DIR = os.path.dirname(__file__)
 RAW_DATA_PATH = os.path.join(BASE_DIR, "..", "data", "01_raw", f"{SYMBOL}_data_raw.csv")
-
 PROCESSED_DATA_DIR = os.path.join(BASE_DIR, "..", "data", "02_processed")
 MODELS_DIR = os.path.join(BASE_DIR, "..", "models")
 
 SCALER_PATH = os.path.join(MODELS_DIR, "scaler.joblib")
+STATS_PATH = os.path.join(
+    MODELS_DIR, "baseline_stats.json"
+)  # Novo arquivo de estatísticas
 TRAIN_PATH = os.path.join(PROCESSED_DATA_DIR, "train_scaled.npy")
 VALID_PATH = os.path.join(PROCESSED_DATA_DIR, "valid_scaled.npy")
 TEST_PATH = os.path.join(PROCESSED_DATA_DIR, "test_scaled.npy")
 
-# --- Funções ---
-
 
 def load_data(path: str) -> pd.DataFrame:
-    """
-    Carrega os dados brutos, define 'Date' como índice e seleciona a coluna de interesse.
-    """
     try:
-        df = pd.read_csv(
-            path,
-            index_col="Date",  # A coluna 'Date' é o índice
-            parse_dates=True,  # Converte para datetime
-        )
-
-        # Seleciona apenas a coluna de interesse
+        df = pd.read_csv(path, index_col="Date", parse_dates=True)
         df_feature = df[[FEATURE_COLUMN]]
-
         logger.info(f"Dados brutos carregados: {len(df_feature)} registros.")
         return df_feature
-
-    except FileNotFoundError:
-        logger.error(f"Erro: Arquivo não encontrado em {path}")
-        return pd.DataFrame()
-    except KeyError as e:
-        logger.error(
-            f"Erro: Coluna 'Date' ou '{FEATURE_COLUMN}' "
-            f"não encontrada em {path}. {e}"
-        )
-        return pd.DataFrame()
     except Exception as e:
-        logger.error(f"Erro inesperado ao carregar dados: {e}")
+        logger.error(f"Erro ao carregar dados: {e}")
         return pd.DataFrame()
+
+
+def save_baseline_stats(df_train: pd.DataFrame):
+    """
+    Salva estatísticas descritivas dos dados de treino.
+    Essencial para detectar Data Drift na API posteriormente.
+    """
+    stats = {
+        "count": int(df_train.count().iloc[0]),
+        "mean": float(df_train.mean().iloc[0]),
+        "std": float(df_train.std().iloc[0]),
+        "min": float(df_train.min().iloc[0]),
+        "max": float(df_train.max().iloc[0]),
+        "q25": float(df_train.quantile(0.25).iloc[0]),
+        "q75": float(df_train.quantile(0.75).iloc[0]),
+    }
+
+    with open(STATS_PATH, "w") as f:
+        json.dump(stats, f, indent=4)
+
+    logger.info(f"Estatísticas de baseline salvas em: {STATS_PATH}")
 
 
 def preprocess_data(df: pd.DataFrame):
-    """
-    Divide os dados cronologicamente, normaliza (escala 0-1).
-    Salva os dados processados e o scaler.
-    """
     if df.empty:
-        logger.error("DataFrame vazio. Abortando pré-processamento.")
         return
 
     # 1. Divisão Cronológica
@@ -76,43 +73,31 @@ def preprocess_data(df: pd.DataFrame):
     valid_data = df.iloc[train_end:valid_end]
     test_data = df.iloc[valid_end:]
 
-    logger.info(
-        f"Divisão: Treino ({len(train_data)}), "
-        f"Validação ({len(valid_data)}), "
-        f"Teste ({len(test_data)})"
-    )
+    logger.info(f"Split realizado. Treino: {len(train_data)} registros.")
 
-    # 2. Normalização (Scaling)
-    # Instancia o scaler, colocando os dados no intervalo [0, 1].
+    # 2. Salvar Baseline de Estatísticas (NOVO)
+    # Devemos salvar as estatísticas DOS DADOS CRUS DE TREINO, antes do scale
+    save_baseline_stats(train_data)
+
+    # 3. Normalização
     scaler = MinMaxScaler(feature_range=(0, 1))
-    # Treina (fit) o scaler APENAS com os dados de TREINO.
     scaler.fit(train_data)
 
-    # Transforma todos os conjuntos com o scaler treinado.
     train_scaled = scaler.transform(train_data)
     valid_scaled = scaler.transform(valid_data)
     test_scaled = scaler.transform(test_data)
 
-    # 3. Salvamento dos Artefatos
-    # Garante que os diretórios de saída existam
+    # 4. Salvamento dos Artefatos
     os.makedirs(PROCESSED_DATA_DIR, exist_ok=True)
     os.makedirs(MODELS_DIR, exist_ok=True)
 
-    # Salvar o scaler.
-    # OBS.: Ele será essencial na API para processar novas entradas e inverter a previsão
     joblib.dump(scaler, SCALER_PATH)
-    logger.info(f"Scaler salvo em: {SCALER_PATH}")
-
-    # Salvamos os dados como arrays numpy (.npy)
-    # OBS.: Este formato é eficiente para carregar no PyTorch.
     np.save(TRAIN_PATH, train_scaled)
     np.save(VALID_PATH, valid_scaled)
     np.save(TEST_PATH, test_scaled)
 
-    logger.info(f"Dados processados salvos em: {PROCESSED_DATA_DIR}")
+    logger.info("Pré-processamento concluído.")
 
-
-# --- Execução do Script ---
 
 if __name__ == "__main__":
     raw_data = load_data(RAW_DATA_PATH)

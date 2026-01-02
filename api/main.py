@@ -6,45 +6,43 @@ import time
 import sys
 import os
 import importlib
+import json
 from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
 from pydantic import BaseModel
 from typing import List, Dict, Optional
 
-# Adiciona o diretório raiz ao path para garantir importação de 'src' e 'api'
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.model import LSTMModel
 from api import logger, __app__, __version__
 
-# Importação dinâmica do script de treino
-# (Necessário porque o arquivo começa com número "03_train", o que quebra o import padrão)
 training_script = importlib.import_module("scripts.03_train")
 
-# --- Configurações da API ---
 app = FastAPI(
     title=__app__,
-    description="API para previsão de preços de ações com suporte a MLOps",
+    description="API LSTM com Monitoramento de Data Drift",
     version=__version__,
 )
 
-# Caminhos dos arquivos
+# Caminhos
 MODEL_PATH = "models/lstm_model.pth"
 SCALER_PATH = "models/scaler.joblib"
+STATS_PATH = "models/baseline_stats.json"  # Caminho do baseline
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Variáveis globais
 model = None
 scaler = None
-training_active = False  # Flag para controle de concorrência simples
+baseline_stats = None  # Armazena estatísticas de treino
+training_active = False
 
 
-# --- Modelos Pydantic ---
+# --- Pydantic Models ---
 class PredictionRequest(BaseModel):
     last_prices: List[float]
 
 
 class TrainRequest(BaseModel):
-    # Dicionário opcional de hiperparâmetros
     hyperparameters: Optional[Dict[str, float]] = None
 
 
@@ -52,42 +50,43 @@ class ConfigResponse(BaseModel):
     current_params: Dict[str, float]
 
 
-# --- Middleware de Monitoramento ---
+class DriftReport(BaseModel):
+    is_drift: bool
+    drift_details: Dict[str, str]
+
+
+# --- Middleware ---
 @app.middleware("http")
 async def monitor_performance(request: Request, call_next):
     start_time = time.time()
     response = await call_next(request)
     process_time = time.time() - start_time
     logger.info(
-        f"Path: {request.url.path} | "
-        f"Method: {request.method} | "
-        f"Status: {response.status_code} | "
-        f"Latency: {process_time:.4f}s"
+        f"Path: {request.url.path} | Method: {request.method} | "
+        f"Status: {response.status_code} | Latency: {process_time:.4f}s"
     )
     return response
 
 
-# --- Lógica Reutilizável de Carregamento ---
+# --- Lógica de Negócio ---
 def load_model_logic():
-    """
-    Função centralizada para carregar/recarregar o modelo e o scaler.
-    Utilizada na inicialização e no endpoint de reload.
-    """
-    global model, scaler
-
+    global model, scaler, baseline_stats
     try:
-        # 1. Carregar o Scaler
         if os.path.exists(SCALER_PATH):
             scaler = joblib.load(SCALER_PATH)
-            logger.info(f"Scaler carregado: {SCALER_PATH}")
+            logger.info("Scaler carregado.")
+
+        if os.path.exists(STATS_PATH):
+            with open(STATS_PATH, "r") as f:
+                baseline_stats = json.load(f)
+            logger.info("Baseline estatístico carregado para monitoramento de Drift.")
         else:
-            logger.warning(f"Scaler não encontrado em {SCALER_PATH}")
+            logger.warning(
+                "Baseline stats não encontrado. Monitoramento de Drift inativo."
+            )
 
-        # 2. Carregar o Modelo
         if os.path.exists(MODEL_PATH):
-            # Obtém os parâmetros atuais para instanciar a arquitetura correta
             params = training_script.CURRENT_PARAMS
-
             model = LSTMModel(
                 input_size=1,
                 hidden_size=int(params["hidden_size"]),
@@ -96,32 +95,65 @@ def load_model_logic():
             model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
             model.to(DEVICE)
             model.eval()
-            logger.info(f"Modelo LSTM carregado: {MODEL_PATH}")
-        else:
-            logger.warning(f"Modelo não encontrado em {MODEL_PATH}")
-
+            logger.info("Modelo carregado.")
     except Exception as e:
-        logger.error(f"Falha ao carregar artefatos: {e}")
+        logger.error(f"Erro no carregamento: {e}")
         raise e
 
 
-# --- Tarefa de Background ---
+def detect_drift(input_data: List[float]) -> Dict:
+    """
+    Verifica se os dados de entrada desviam significativamente do baseline de treino.
+    Regras simples de Drift:
+    1. Out-of-Bounds: Valores maiores que o máx ou menores que o min do treino.
+    2. Volatility Shift: Desvio padrão da entrada muito superior ao do treino.
+    """
+    if not baseline_stats:
+        return {"drift": False, "reason": "Baseline not loaded"}
+
+    input_arr = np.array(input_data)
+    drift_reasons = []
+
+    # Checagem 1: Extremos (Novos máximos ou mínimos históricos)
+    # Adicionamos uma margem de 10% para não alertar ruídos pequenos
+    margin = 0.10
+    limit_max = baseline_stats["max"] * (1 + margin)
+    limit_min = baseline_stats["min"] * (1 - margin)
+
+    if np.max(input_arr) > limit_max:
+        drift_reasons.append(
+            f"Input Max ({np.max(input_arr):.2f}) excede baseline histórico."
+        )
+
+    if np.min(input_arr) < limit_min:
+        drift_reasons.append(
+            f"Input Min ({np.min(input_arr):.2f}) abaixo do baseline histórico."
+        )
+
+    # Checagem 2: Volatilidade (O mercado está muito mais arisco que no treino?)
+    input_std = np.std(input_arr)
+    # Se a volatilidade atual for 2x maior que a média histórica, alerta.
+    if input_std > (baseline_stats["std"] * 3):
+        drift_reasons.append("Alta volatilidade detectada (3x superior ao treino).")
+
+    is_drift = len(drift_reasons) > 0
+    if is_drift:
+        logger.warning(f"DATA DRIFT DETECTADO: {drift_reasons}")
+
+    return {"drift": is_drift, "reasons": drift_reasons}
+
+
 def background_train_task(params: dict):
-    """Executa o treino em background e gerencia a flag de estado."""
     global training_active
     try:
         training_active = True
-        logger.info("Iniciando tarefa de treinamento em background...")
-        # Chama a função train do script importado dinamicamente
         training_script.train(override_params=params)
-        logger.info("Tarefa de treinamento concluída.")
     except Exception as e:
-        logger.error(f"Erro no treinamento em background: {e}")
+        logger.error(f"Erro treino background: {e}")
     finally:
         training_active = False
 
 
-# --- Eventos de Ciclo de Vida ---
 @app.on_event("startup")
 def startup_event():
     load_model_logic()
@@ -132,56 +164,37 @@ def startup_event():
 
 @app.get("/")
 def root():
-    return {
-        "app": __app__,
-        "version": __version__,
-        "status": "online",
-        "docs": "/docs",
-    }
+    return {"app": __app__, "version": __version__, "status": "online"}
 
 
 @app.get("/health")
 def health_check():
-    """
-    Endpoint 2: Monitoramento.
-    Retorna saúde da aplicação, uso de recursos e status de treino.
-    """
     try:
-        cpu_usage = psutil.cpu_percent(interval=None)
-        memory_info = psutil.virtual_memory()
-
+        cpu = psutil.cpu_percent()
+        mem = psutil.virtual_memory()
         return {
             "status": "healthy" if model else "degraded",
-            "training_active": training_active,
-            "server_time": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "resources": {
-                "cpu_usage_percent": cpu_usage,
-                "memory_usage_percent": memory_info.percent,
-                "memory_available_mb": memory_info.available // (1024 * 1024),
-            },
-            "components": {
-                "model_loaded": model is not None,
-                "scaler_loaded": scaler is not None,
-            },
+            "drift_monitoring": baseline_stats is not None,
+            "resources": {"cpu": cpu, "memory": mem.percent},
         }
     except Exception as e:
-        logger.error(f"Erro no health check: {e}")
         return {"status": "unhealthy", "detail": str(e)}
 
 
 @app.post("/predict")
 def predict_next_day(request: PredictionRequest):
-    """Endpoint 3: Inferência."""
     if not model or not scaler:
-        raise HTTPException(status_code=503, detail="Modelo indisponível.")
+        raise HTTPException(status_code=503, detail="Serviço indisponível.")
 
     input_data = request.last_prices
     if len(input_data) < 10:
-        raise HTTPException(
-            status_code=400, detail="Forneça ao menos 10 dias de dados."
-        )
+        raise HTTPException(status_code=400, detail="Dados insuficientes.")
+
+    # 1. Monitoramento de Drift (Antes da predição)
+    drift_info = detect_drift(input_data)
 
     try:
+        # 2. Pipeline de Predição
         input_array = np.array(input_data).reshape(-1, 1)
         input_scaled = scaler.transform(input_array)
         sequence = (
@@ -192,61 +205,42 @@ def predict_next_day(request: PredictionRequest):
             prediction_scaled = model(sequence)
 
         prediction_val = scaler.inverse_transform(prediction_scaled.cpu().numpy())
-        result_value = float(prediction_val[0][0])
+        result = float(prediction_val[0][0])
 
-        return {"input_days": len(input_data), "predicted_price": result_value}
+        # Retorna o resultado E o aviso de drift, se houver
+        return {
+            "predicted_price": result,
+            "drift_warning": drift_info["drift"],
+            "drift_details": drift_info["reasons"],
+        }
 
     except Exception as e:
-        logger.error(f"Erro na predição: {str(e)}")
+        logger.error(f"Erro na predição: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/train")
 def trigger_training(request: TrainRequest, background_tasks: BackgroundTasks):
-    """
-    Endpoint 4: Gatilho de Treinamento.
-    Roda em background para não bloquear a API.
-    """
     if training_active:
-        raise HTTPException(status_code=409, detail="Já existe um treino em andamento.")
-
+        raise HTTPException(status_code=409, detail="Treino em andamento.")
     params = request.hyperparameters or {}
-
-    # Adiciona a tarefa à fila de execução do FastAPI
     background_tasks.add_task(background_train_task, params)
-
-    return {
-        "message": "Treinamento iniciado em background.",
-        "params_recebidos": params,
-        "status": "processing",
-    }
+    return {"status": "processing", "message": "Treino iniciado."}
 
 
 @app.get("/config", response_model=ConfigResponse)
 def get_config():
-    """Endpoint 5 (Leitura): Visualiza hiperparâmetros atuais."""
     return {"current_params": training_script.CURRENT_PARAMS}
 
 
 @app.post("/config")
 def update_config(request: TrainRequest):
-    """Endpoint 5 (Escrita): Atualiza hiperparâmetros padrão."""
     if request.hyperparameters:
         training_script.CURRENT_PARAMS.update(request.hyperparameters)
-    return {
-        "message": "Parâmetros globais atualizados.",
-        "current_params": training_script.CURRENT_PARAMS,
-    }
+    return {"message": "Atualizado.", "current_params": training_script.CURRENT_PARAMS}
 
 
 @app.post("/model/reload")
 def reload_model():
-    """
-    Endpoint Extra: Hot Reload.
-    Atualiza a API com o novo modelo treinado sem reiniciar o container.
-    """
-    try:
-        load_model_logic()
-        return {"message": "Modelo e scaler recarregados com sucesso."}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao recarregar: {e}")
+    load_model_logic()
+    return {"message": "Recarregado."}
