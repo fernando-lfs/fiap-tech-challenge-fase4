@@ -182,3 +182,25 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# --- MLOps (MLflow) ---
+mlruns/.trash/
+
+# --- Deep Learning (PyTorch Lightning) ---
+# Ignorar logs de eventos e versões que não sejam o melhor checkpoint
+lightning_logs/
+models/checkpoints/*.ckpt
+!models/checkpoints/best-checkpoint.ckpt
+
+# --- Artefatos de Dados e Binários ---
+# Ignoramos dados brutos e binários grandes para não sobrecarregar o Git.
+data/01_raw/*.csv
+data/02_processed/*.npy
+models/lstm_model.pth
+models/scaler.joblib
+models/baseline_stats.json
+
+# --- VS Code & Sistema ---
+.vscode/
+.DS_Store
+Thumbs.db
