@@ -2,15 +2,9 @@
 
 > **Deep Learning & AI - FIAP**
 
-Este projeto consiste em uma solução completa de **End-to-End Machine Learning** para prever o preço de fechamento de ações da **CEMIG (CMIG4.SA)**.
+Este projeto consiste em uma solução completa de **End-to-End Machine Learning** para prever o preço de fechamento de ações da **CEMIG (CMIG4.SA)**. 
 
-A solução evoluiu de um modelo preditivo simples para um **Sistema de MLOps robusto**, integrando:
-
-* Redes Neurais **LSTM** (Long Short-Term Memory) com **PyTorch Lightning**.
-* Rastreamento de Experimentos com **MLflow**.
-* API de Inferência **FastAPI** com suporte a **Treinamento Assíncrono**.
-* Monitoramento de **Data Drift** (Desvio de Dados) em tempo real.
-* Containerização completa via **Docker**.
+A solução abrange desde a coleta e pré-processamento de dados financeiros até o treinamento de uma rede neural **LSTM** (Long Short-Term Memory) utilizando **PyTorch Lightning** e **MLflow** , disponibilizando o modelo final através de uma API **FastAPI** robusta e containerizada com **Docker**. O sistema conta ainda com suporte a treinamento assíncrono e monitoramento em tempo real de **Data Drift** para garantir a confiabilidade das previsões em produção.
 
 ---
 
