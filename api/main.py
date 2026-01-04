@@ -183,40 +183,62 @@ def health_check():
 
 @app.post("/predict")
 def predict_next_day(request: PredictionRequest):
+    """
+    Realiza a predição do preço para o próximo dia com base no histórico enviado.
+    Realiza validação de janela temporal e monitoramento de Data Drift.
+    """
     if not model or not scaler:
-        raise HTTPException(status_code=503, detail="Serviço indisponível.")
+        raise HTTPException(
+            status_code=503, detail="Serviço indisponível (artefatos não carregados)."
+        )
 
     input_data = request.last_prices
-    if len(input_data) < 10:
-        raise HTTPException(status_code=400, detail="Dados insuficientes.")
 
-    # 1. Monitoramento de Drift (Antes da predição)
+    # --- OTIMIZAÇÃO: Validação de Janela Temporal ---
+    # Recupera o seq_length esperado diretamente dos parâmetros de treino
+    expected_length = int(training_script.CURRENT_PARAMS["seq_length"])
+    current_length = len(input_data)
+
+    if current_length != expected_length:
+        logger.error(
+            f"Tamanho de entrada inválido: {current_length}. Esperado: {expected_length}"
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=f"O modelo exige exatamente {expected_length} preços históricos para prever o próximo dia. Você enviou {current_length}.",
+        )
+
+    # 1. Monitoramento de Drift (Identifica se os dados saíram do padrão de treino)
     drift_info = detect_drift(input_data)
 
     try:
-        # 2. Pipeline de Predição
+        # 2. Pipeline de Predição: Escalonamento -> Tensor -> Inferência -> Inversa
         input_array = np.array(input_data).reshape(-1, 1)
         input_scaled = scaler.transform(input_array)
+
+        # Converte para tensor e adiciona a dimensão de Batch (1, Seq, Feature)
         sequence = (
             torch.tensor(input_scaled, dtype=torch.float32).unsqueeze(0).to(DEVICE)
         )
 
-        with torch.no_grad():
+        with torch.no_grad():  # Desabilita gradientes para economizar memória em produção
             prediction_scaled = model(sequence)
 
+        # Converte a saída normalizada de volta para o valor em Reais (BRL)
         prediction_val = scaler.inverse_transform(prediction_scaled.cpu().numpy())
         result = float(prediction_val[0][0])
 
-        # Retorna o resultado E o aviso de drift, se houver
+        # Retorna o resultado predito juntamente com o status de saúde dos dados (Drift)
         return {
-            "predicted_price": result,
+            "predicted_price": round(result, 2),
+            "window_used": expected_length,
             "drift_warning": drift_info["drift"],
             "drift_details": drift_info["reasons"],
         }
 
     except Exception as e:
-        logger.error(f"Erro na predição: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Erro interno no pipeline de predição: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao processar a predição.")
 
 
 @app.post("/train")

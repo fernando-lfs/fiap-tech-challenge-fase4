@@ -11,18 +11,17 @@ import mlflow
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from scripts import logger
 
+# Adiciona diretório raiz ao path para garantir importações do src
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.dataset import TimeSeriesDataset
 from src.model import LSTMModel
+# Importação dinâmica dos parâmetros atuais para evitar inconsistência (DRY)
+from scripts.03_train import CURRENT_PARAMS 
 
-# Configurações
+# --- Configurações de Ambiente ---
 EXPERIMENT_NAME = "Experimento_LSTM_CMIG4"
 RUN_NAME = "Avaliacao_Teste"
-SEQ_LENGTH = 60
-BATCH_SIZE = 32
-HIDDEN_SIZE = 64
-NUM_LAYERS = 2
 
 # Caminhos
 DATA_DIR = os.path.join("data", "02_processed")
@@ -34,13 +33,21 @@ os.makedirs(RESULTS_DIR, exist_ok=True)
 
 
 def calculate_mape(y_true, y_pred):
+    """Calcula o Erro Percentual Absoluto Médio."""
     return np.mean(np.abs((y_true - y_pred) / y_true)) * 100
 
 
 def evaluate():
-    logger.info("=== Iniciando Avaliação (MLflow Tracking) ===")
+    logger.info("=== Iniciando Avaliação (Parâmetros Dinâmicos) ===")
 
-    # Configura para logar no mesmo experimento
+    # Extração dos parâmetros atuais definidos no módulo de treino
+    # Isso garante que a avaliação use a mesma arquitetura salva no .pth
+    seq_length = int(CURRENT_PARAMS["seq_length"])
+    batch_size = int(CURRENT_PARAMS["batch_size"])
+    hidden_size = int(CURRENT_PARAMS["hidden_size"])
+    num_layers = int(CURRENT_PARAMS["num_layers"])
+
+    # Configura para logar no mesmo experimento do MLflow
     mlflow.set_experiment(EXPERIMENT_NAME)
 
     with mlflow.start_run(run_name=RUN_NAME):
@@ -49,16 +56,22 @@ def evaluate():
         # 1. Carga de Dados
         test_data = np.load(TEST_PATH)
         scaler = joblib.load(SCALER_PATH)
-        test_dataset = TimeSeriesDataset(test_data, seq_length=SEQ_LENGTH)
-        test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
+        
+        # O dataset agora recebe o seq_length dinâmico
+        test_dataset = TimeSeriesDataset(test_data, seq_length=seq_length)
+        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
-        # 2. Carga do Modelo
-        model = LSTMModel(input_size=1, hidden_size=HIDDEN_SIZE, num_layers=NUM_LAYERS)
+        # 2. Carga do Modelo (Arquitetura instanciada com parâmetros dinâmicos)
+        model = LSTMModel(
+            input_size=1, 
+            hidden_size=hidden_size, 
+            num_layers=num_layers
+        )
         model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
         model.to(device)
         model.eval()
 
-        # 3. Inferência
+        # 3. Inferência (Loop de Teste)
         predictions = []
         actuals = []
         with torch.no_grad():
@@ -68,13 +81,13 @@ def evaluate():
                 predictions.extend(outputs.cpu().numpy())
                 actuals.extend(targets.numpy())
 
-        # 4. Desnormalização
+        # 4. Desnormalização (Conversão para valores monetários reais)
         predictions = np.array(predictions).reshape(-1, 1)
         actuals = np.array(actuals).reshape(-1, 1)
         pred_real = scaler.inverse_transform(predictions)
         actual_real = scaler.inverse_transform(actuals)
 
-        # 5. Métricas
+        # 5. Cálculo de Métricas
         mae = mean_absolute_error(actual_real, pred_real)
         rmse = np.sqrt(mean_squared_error(actual_real, pred_real))
         mape = calculate_mape(actual_real, pred_real)
@@ -83,25 +96,26 @@ def evaluate():
             f"Métricas Finais - MAE: {mae:.4f} | RMSE: {rmse:.4f} | MAPE: {mape:.4f}%"
         )
 
-        # LOG NO MLFLOW
+        # Registro no MLflow para versionamento e comparação posterior
+        mlflow.log_param("seq_length_eval", seq_length)
         mlflow.log_metric("test_mae", mae)
         mlflow.log_metric("test_rmse", rmse)
         mlflow.log_metric("test_mape", mape)
 
-        # 6. Gráfico
+        # 6. Geração do Gráfico de Performance
         plt.figure(figsize=(12, 6))
         plt.plot(actual_real, label="Real", color="blue", alpha=0.7)
         plt.plot(pred_real, label="Previsto", color="red", alpha=0.7)
-        plt.title("Resultado Final (Teste) - CMIG4")
+        plt.title(f"Resultado Final (Teste) - CMIG4 (Window: {seq_length})")
         plt.legend()
         plt.grid(True)
 
         plot_path = os.path.join(RESULTS_DIR, "prediction_plot.png")
         plt.savefig(plot_path)
 
-        # Log do gráfico como artefato
+        # Log do gráfico como artefato no servidor de experimentos
         mlflow.log_artifact(plot_path)
-        logger.info("Gráfico e métricas enviados para o MLflow.")
+        logger.info("Avaliação concluída e registrada no MLflow.")
 
 
 if __name__ == "__main__":

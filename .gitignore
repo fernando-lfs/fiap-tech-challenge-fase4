@@ -196,8 +196,8 @@ models/checkpoints/*.ckpt
 # Ignoramos dados brutos e binários grandes para não sobrecarregar o Git.
 data/01_raw/*.csv
 data/02_processed/*.npy
-models/lstm_model.pth
-models/scaler.joblib
+# models/lstm_model.pth
+# models/scaler.joblib
 models/baseline_stats.json
 
 # --- VS Code & Sistema ---

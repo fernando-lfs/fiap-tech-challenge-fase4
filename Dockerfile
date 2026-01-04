@@ -1,32 +1,40 @@
 # 1. Imagem Base
-# Utilizamos python:3.11-slim para manter o container leve e rápido.
-# Compatível com a versão 3.11.9 usada no projeto.
+# Utilizado python:3.11-slim para manter o container leve e rápido.
 FROM python:3.11-slim
 
-# 2. Definição do Diretório de Trabalho
-# Todas as ações subsequentes ocorrerão dentro de /app no container.
+# 2. Metadados
+LABEL maintainer="Fernando Luiz Ferreira"
+LABEL version="0.1.0"
+
+# 3. Configurações de Ambiente
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# 4. Definição do Diretório de Trabalho
 WORKDIR /app
 
-# 3. Instalação de Dependências
-# Copiamos apenas o requirements.txt primeiro para aproveitar o cache do Docker.
+# 5. Instalação de Dependências
 COPY requirements.txt .
-
-# Instalamos as dependências sem cache para reduzir o tamanho da imagem.
-# --no-cache-dir: Evita salvar arquivos de cache do pip.
+# Dependências instaladas sem cache para reduzir o tamanho da imagem.
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 4. Cópia do Código Fonte e Artefatos
-# Copiamos apenas as pastas necessárias para a execução da API.
-# A estrutura de pastas é mantida para garantir que os imports funcionem.
+# 6. Cópia da Aplicação e Scripts
+# Copiadas apenas pastas necessárias para a execução da API.
 COPY api/ ./api/
 COPY src/ ./src/
+COPY scripts/ ./scripts/
+
+# 7. Cópia de Artefatos e Dados
+# Copiados modelos já treinados
 COPY models/ ./models/
+# Copiados dados processados para permitir o funcionamento do endpoint /train
+COPY data/02_processed/ ./data/02_processed/
 
-# 5. Exposição da Porta
-# Informamos que o container escutará na porta 8000 (padrão FastAPI/Uvicorn).
+# 8. Diretório para Logs do MLflow
+RUN mkdir -p mlruns
+
+# 9. Exposição da porta e Inicialização do servidor Uvicorn
+# Container escutará na porta 8000 (padrão FastAPI/Uvicorn).
 EXPOSE 8000
-
-# 6. Comando de Inicialização
-# Iniciamos o servidor Uvicorn.
 # --host 0.0.0.0: Essencial para acessar o container externamente.
 CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]

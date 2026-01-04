@@ -30,7 +30,7 @@ def download_stock_data(symbol: str, start: str, end: str, output_path: str):
         end (str): Data de fim (YYYY-MM-DD).
         output_path (str): Caminho completo para salvar o .csv.
     """
-    logger.info("Iniciando download dos dados para {symbol}...")
+    logger.info(f"Iniciando download dos dados para {symbol}...")
     logger.info(f"Período: {start} até {end}")
 
     try:

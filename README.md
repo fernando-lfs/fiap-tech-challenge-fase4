@@ -57,13 +57,21 @@ Para atender aos requisitos de qualidade de engenharia, as seguintes decisões f
 │   ├── 01_coleta_dados.py
 │   ├── 02_preprocess.py  # Gera dados normalizados e Baseline de Drift
 │   ├── 03_train.py       # Treino com Lightning + MLflow
-│   └── 04_evaluate.py    # Avaliação em dados de teste
+│   ├── 04_evaluate.py    # Avaliação em dados de teste
+|   └── __init__.py       # Configuração de Logging
 ├── src/                  # Código Fonte Reutilizável
 │   ├── dataset.py
-│   └── model.py
+│   ├── model.py
+|   └── __init__.py
+├── .dockerignore
+├── .gitignore
+├── CONTRIBUTING.md
 ├── Dockerfile
+├── mlflow.db
+├── poetry.lock
 ├── pyproject.toml
-└── README.md
+├── README.md
+└── requiriments.txt
 ```
 
 ---
@@ -124,6 +132,8 @@ O modelo final (LSTM com 2 camadas, 64 neurônios) atingiu os seguintes resultad
    python -m scripts.04_evaluate
    ```
 
+   ⚠️ **Atenção:** É obrigatório executar o script `02_preprocess.py` antes de iniciar a API ou o treinamento. Este script gera o arquivo `baseline_stats.json`, essencial para que o detector de Drift funcione corretamente. Caso ele não exista, o monitoramento de qualidade da API será desativado.
+
 3. **Visualizar Experimentos (MLflow):**
    
    ```bash
@@ -148,6 +158,7 @@ A API possui 5 endpoints principais para ciclo de vida completo do modelo.
 Realiza a previsão e verifica se há **Data Drift**.
 
 * **Input:** Lista de preços (float).
+  * **Importante:** A lista deve conter **exatamente 60 valores** (correspondente ao `seq_length` configurado), representando os últimos 60 dias de fechamento para a previsão do dia seguinte.
 * **Output:** Preço previsto e alerta de drift.
 
 ```json
@@ -176,7 +187,7 @@ Dispara um novo treinamento em **background** (sem travar a API).
 
 ### 3. Configuração (`GET/POST /config`)
 
-Lê ou atualiza os hiperparâmetros globais usados nos próximos treinos.
+O endpoint /config permite o tuning dinâmico de hiperparâmetros. Ao atualizar a configuração e disparar o /train, o sistema realiza o ajuste fino (fine-tuning) do modelo sem necessidade de alterar o código-fonte.
 
 ### 4. Recarregar Modelo (`POST /model/reload`)
 
@@ -188,19 +199,32 @@ Monitora CPU, Memória e disponibilidade dos artefatos.
 
 ---
 
+## 📚 Glossário Técnico
+
+* **LSTM (Long Short-Term Memory):** Tipo de rede neural recorrente capaz de aprender dependências de longo prazo, ideal para séries temporais (como preços de ações).
+
+* **Data Drift:** Ocorre quando as propriedades estatísticas dos dados de entrada mudam de forma significativa em relação aos dados usados no treino. No mercado financeiro, isso pode ser causado por crises econômicas ou mudanças bruscas na volatilidade, o que pode invalidar as predições do modelo.
+
+* **MAPE (Mean Absolute Percentage Error):** Métrica que indica o erro médio em porcentagem. Um MAPE de 1.56% significa que, em média, a previsão erra apenas 1.56% do valor real da ação.
+
+---
+
 ## ☁️ Escalabilidade e Monitoramento (Proposta)
 
-Para garantir a elasticidade da solução em ambiente produtivo de alta demanda, propõe-se a seguinte arquitetura:
+Para garantir a elasticidade da solução em ambiente produtivo de alta escala, propõe-se a seguinte arquitetura baseada em microsserviços e orquestração:
 
-1. **Horizontal Pod Autoscaler (HPA) no Kubernetes:**
-* Configuração de um HPA monitorando a métrica de **CPU** e **Latência**.
-* **Regra:** Se a utilização de CPU ultrapassar 70%, o Kubernetes inicia novas réplicas (Pods) da API automaticamente.
-2. **Desacoplamento de Treino:**
-* Em produção, o endpoint `/train` enviaria uma mensagem para uma fila (Redis/RabbitMQ).
-* Workers dedicados (Celery) consumiriam essa fila para treinar o modelo, evitando impacto na performance da inferência.
-3. **Monitoramento de Qualidade:**
-* O mecanismo de *Drift* atual gera logs estruturados (`WARNING`).
-* Ferramentas como **Fluentd** ou **Filebeat** coletariam esses logs para gerar alertas em dashboards (Grafana/Kibana) quando a taxa de drift excedesse um limiar seguro.
+1. **Orquestração e Auto-scaling:**
+* **Horizontal Pod Autoscaler (HPA) no Kubernetes:** Configuração de um HPA para monitorar métricas de **CPU** e **Latência de Requisição**.
+* **Regra de Escala:** Caso a utilização de CPU ultrapasse 70% ou a latência média exceda um limite definido, o Kubernetes iniciará novas réplicas (Pods) da API automaticamente para suportar a carga.
+2. **Arquitetura de Deploy e Balanceamento:**
+* **Ingress Controller (Nginx):** Atua como o ponto de entrada único e **Load Balancer**, distribuindo o tráfego de forma inteligente entre os diversos Pods ativos da API, garantindo alta disponibilidade.
+* **Serviço de Treinamento Dedicado:** O endpoint `/train` deve ser desacoplado para um **Worker** assíncrono especializado.
+3. **Desacoplamento de Processos Pesados:**
+* **Fila de Mensagens (Redis/RabbitMQ):** Em produção, a requisição de treinamento não é executada pela API de inferência, mas enviada para uma fila.
+* **Workers Assíncronos (Celery):** Instâncias dedicadas consomem essa fila para processar o treinamento de forma isolada, evitando que o consumo intensivo de recursos (CPU/GPU) do treino prejudique a performance e a latência das previsões para o usuário final.
+4. **Monitoramento de Qualidade (Observabilidade):**
+* **Detecção de Drift:** O mecanismo de monitoramento implementado gera logs estruturados (`WARNING`) sempre que uma anomalia estatística é detectada.
+* **Dashboards de Qualidade:** Utilização de ferramentas como **Fluentd** ou **Filebeat** para coletar esses logs e enviá-los para um stack de visualização (**Grafana/Kibana**), permitindo alertas em tempo real sobre a degradação da precisão do modelo.
 
 ---
 

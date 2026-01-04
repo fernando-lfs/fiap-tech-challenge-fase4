@@ -27,12 +27,14 @@ Para manter a integridade da *branch* principal (`main`), siga este fluxo:
     * *Bom:* `def train(epochs: int) -> float:`
     * *Evitar:* `def train(epochs):`
 * **Logging:** Não utilize `print()`. Utilize o objeto `logger` configurado em `scripts/__init__.py` ou `api/__init__.py`.
+**Gerenciamento de Dependências:** Caso adicione novas bibliotecas, utilize obrigatoriamente o comando `poetry add <pacote>`. Isso garante que os arquivos `pyproject.toml` e `poetry.lock` permaneçam sincronizados, permitindo a reconstrução fiel do ambiente. **Nunca** altere o `requirements.txt` manualmente, pois ele é gerado via exportação do Poetry para o build do Docker.
 
 ## 4. MLOps e Experimentos
 
 Se sua contribuição envolve alterações no modelo ou nos dados:
 
-* **MLflow:** Certifique-se de que novos parâmetros sejam logados via `mlflow.log_params()`.
+* **MLflow:** É obrigatório que novos parâmetros, métricas ou artefatos sejam registrados via `mlflow.log_params()`, `log_metrics()` ou `log_artifacts()`.
+* **PyTorch Lightning:** Mantenha a lógica de treino desacoplada da arquitetura do modelo, utilizando o `LightningModule` para padronizar o ciclo de vida do experimento.
 * **Reprodutibilidade:** Se alterar o pré-processamento, atualize a função `save_baseline_stats` em `scripts/02_preprocess.py`.
 
 ## 5. Mensagens de Commit
@@ -41,19 +43,21 @@ Recomendamos o padrão **Conventional Commits**:
 
 * `feat:` Nova funcionalidade (ex: `feat: adiciona endpoint de reload`).
 * `fix:` Correção de bug (ex: `fix: erro no cálculo do MAPE`).
-* `docs:` Alterações na documentação.
+* `docs:` Alterações na documentação (README, CONTRIBUTING).
 * `refactor:` Refatoração de código sem mudança de funcionalidade.
+* `chore:` Atualização de dependências ou tarefas administrativas.
 
 ## 6. Testes Antes do PR
 
-Antes de submeter, execute o pipeline localmente para garantir que nada quebrou:
+Antes de submeter suas alterações, execute o pipeline completo localmente para validar a integridade do sistema:
 
 ```bash
-# 1. Garanta que o ETL roda
+# 1. Valide o ETL e a geração do baseline estatístico
 python -m scripts.02_preprocess
 
-# 2. Garanta que o treino finaliza e salva o .pth
+# 2. Garanta que o treinamento (Lightning + MLflow) finalize com sucesso
 python -m scripts.03_train
 
-# 3. Verifique se a API sobe
+# 3. Verifique se a API FastAPI inicializa e carrega os novos artefatos
 uvicorn api.main:app --reload
+```

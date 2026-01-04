@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "tech-challenge-deep-learning"
 version = "0.1.0"
-description = ""
+description = "Projeto de previsão de ações com LSTM e MLOps"
 authors = ["fernando-lfs <fernando.l.f@outlook.com>"]
 readme = "README.md"
 package-mode = false
@@ -9,7 +9,6 @@ package-mode = false
 [tool.poetry.dependencies]
 python = ">=3.11,<3.15"
 yfinance = "^0.2.66"
-panda = "^0.3.1"
 scikit-learn = "^1.7.2"
 numpy = "^2.3.4"
 joblib = "^1.5.2"
@@ -20,6 +19,7 @@ uvicorn = "^0.38.0"
 psutil = "^7.1.3"
 mlflow = "^3.8.1"
 pytorch-lightning = "^2.6.0"
+pandas = "^2.3.3"
 
 
 [build-system]

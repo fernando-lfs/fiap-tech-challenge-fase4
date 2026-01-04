@@ -1,12 +1,19 @@
-# Ignorar ambiente virtual e cache
+# Ambiente virtual e cache
 .venv
 __pycache__
 *.pyc
 
-# Ignorar git
+# Git
 .git
 
-# Ignorar dados brutos (apenas os modelos processados são necessários para a API)
-data/
+# Dados brutos (apenas os modelos processados são necessários para a API)
+data/01_raw/
 results/
 tests/
+
+# MLflow local database
+mlflow.db
+
+# PyTorch/Lightning cache
+.torch/
+.lightning/
