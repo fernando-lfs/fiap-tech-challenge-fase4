@@ -11,9 +11,11 @@ from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
 from pydantic import BaseModel
 from typing import List, Dict, Optional
 
+# Adiciona raiz ao path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.model import LSTMModel
+from src import config  # Importação das configurações centralizadas
 from api import logger, __app__, __version__
 
 training_script = importlib.import_module("scripts.03_train")
@@ -24,10 +26,7 @@ app = FastAPI(
     version=__version__,
 )
 
-# Caminhos
-MODEL_PATH = "models/lstm_model.pth"
-SCALER_PATH = "models/scaler.joblib"
-STATS_PATH = "models/baseline_stats.json"  # Caminho do baseline
+# Caminhos (Agora vêm do config.py)
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Variáveis globais
@@ -72,12 +71,13 @@ async def monitor_performance(request: Request, call_next):
 def load_model_logic():
     global model, scaler, baseline_stats
     try:
-        if os.path.exists(SCALER_PATH):
-            scaler = joblib.load(SCALER_PATH)
+        # Usa caminhos do config
+        if os.path.exists(config.SCALER_PATH):
+            scaler = joblib.load(config.SCALER_PATH)
             logger.info("Scaler carregado.")
 
-        if os.path.exists(STATS_PATH):
-            with open(STATS_PATH, "r") as f:
+        if os.path.exists(config.STATS_PATH):
+            with open(config.STATS_PATH, "r") as f:
                 baseline_stats = json.load(f)
             logger.info("Baseline estatístico carregado para monitoramento de Drift.")
         else:
@@ -85,14 +85,14 @@ def load_model_logic():
                 "Baseline stats não encontrado. Monitoramento de Drift inativo."
             )
 
-        if os.path.exists(MODEL_PATH):
+        if os.path.exists(config.MODEL_PATH):
             params = training_script.CURRENT_PARAMS
             model = LSTMModel(
                 input_size=1,
                 hidden_size=int(params["hidden_size"]),
                 num_layers=int(params["num_layers"]),
             )
-            model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
+            model.load_state_dict(torch.load(config.MODEL_PATH, map_location=DEVICE))
             model.to(DEVICE)
             model.eval()
             logger.info("Modelo carregado.")

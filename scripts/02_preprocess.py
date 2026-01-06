@@ -2,36 +2,22 @@ import pandas as pd
 import numpy as np
 from sklearn.preprocessing import MinMaxScaler
 import os
+import sys
 import joblib
 import json
 from scripts import logger
 
-# --- Configurações ---
-SYMBOL = "CMIG4.SA"
-FEATURE_COLUMN = "Close"  # Coluna alvo para a previsão
-TRAIN_RATIO = 0.7
-VALID_RATIO = 0.15
-# TEST_RATIO é 0.15
+# Adiciona o diretório raiz ao sys.path para permitir importação de src
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-# --- Caminhos (Paths) ---
-BASE_DIR = os.path.dirname(__file__)
-RAW_DATA_PATH = os.path.join(BASE_DIR, "..", "data", "01_raw", f"{SYMBOL}_data_raw.csv")
-PROCESSED_DATA_DIR = os.path.join(BASE_DIR, "..", "data", "02_processed")
-MODELS_DIR = os.path.join(BASE_DIR, "..", "models")
-
-SCALER_PATH = os.path.join(MODELS_DIR, "scaler.joblib")
-STATS_PATH = os.path.join(
-    MODELS_DIR, "baseline_stats.json"
-)  # Novo arquivo de estatísticas
-TRAIN_PATH = os.path.join(PROCESSED_DATA_DIR, "train_scaled.npy")
-VALID_PATH = os.path.join(PROCESSED_DATA_DIR, "valid_scaled.npy")
-TEST_PATH = os.path.join(PROCESSED_DATA_DIR, "test_scaled.npy")
+from src import config
 
 
 def load_data(path: str) -> pd.DataFrame:
     try:
         df = pd.read_csv(path, index_col="Date", parse_dates=True)
-        df_feature = df[[FEATURE_COLUMN]]
+        # Usa a coluna definida na configuração central
+        df_feature = df[[config.FEATURE_COLUMN]]
         logger.info(f"Dados brutos carregados: {len(df_feature)} registros.")
         return df_feature
     except Exception as e:
@@ -54,20 +40,21 @@ def save_baseline_stats(df_train: pd.DataFrame):
         "q75": float(df_train.quantile(0.75).iloc[0]),
     }
 
-    with open(STATS_PATH, "w") as f:
+    # Usa caminho definido no config
+    with open(config.STATS_PATH, "w") as f:
         json.dump(stats, f, indent=4)
 
-    logger.info(f"Estatísticas de baseline salvas em: {STATS_PATH}")
+    logger.info(f"Estatísticas de baseline salvas em: {config.STATS_PATH}")
 
 
 def preprocess_data(df: pd.DataFrame):
     if df.empty:
         return
 
-    # 1. Divisão Cronológica
+    # 1. Divisão Cronológica (Usa ratios do config)
     n = len(df)
-    train_end = int(n * TRAIN_RATIO)
-    valid_end = int(n * (TRAIN_RATIO + VALID_RATIO))
+    train_end = int(n * config.TRAIN_RATIO)
+    valid_end = int(n * (config.TRAIN_RATIO + config.VALID_RATIO))
 
     train_data = df.iloc[:train_end]
     valid_data = df.iloc[train_end:valid_end]
@@ -87,18 +74,20 @@ def preprocess_data(df: pd.DataFrame):
     valid_scaled = scaler.transform(valid_data)
     test_scaled = scaler.transform(test_data)
 
-    # 4. Salvamento dos Artefatos
-    os.makedirs(PROCESSED_DATA_DIR, exist_ok=True)
-    os.makedirs(MODELS_DIR, exist_ok=True)
+    # 4. Salvamento dos Artefatos (Usa caminhos do config)
+    # Diretórios já são garantidos pelo config.py, mas mantemos por segurança
+    os.makedirs(config.PROCESSED_DATA_DIR, exist_ok=True)
+    os.makedirs(config.MODELS_DIR, exist_ok=True)
 
-    joblib.dump(scaler, SCALER_PATH)
-    np.save(TRAIN_PATH, train_scaled)
-    np.save(VALID_PATH, valid_scaled)
-    np.save(TEST_PATH, test_scaled)
+    joblib.dump(scaler, config.SCALER_PATH)
+    np.save(config.TRAIN_DATA_PATH, train_scaled)
+    np.save(config.VALID_DATA_PATH, valid_scaled)
+    np.save(config.TEST_DATA_PATH, test_scaled)
 
     logger.info("Pré-processamento concluído.")
 
 
 if __name__ == "__main__":
-    raw_data = load_data(RAW_DATA_PATH)
+    # Carrega do caminho definido no config
+    raw_data = load_data(config.RAW_DATA_PATH)
     preprocess_data(raw_data)

@@ -16,32 +16,21 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.dataset import TimeSeriesDataset
 from src.model import LSTMModel
+from src import config  # Importação das configurações centralizadas
 
 # ==========================================
 # CONFIGURAÇÕES
 # ==========================================
-EXPERIMENT_NAME = "Experimento_LSTM_CMIG4"
+# Usa nomes definidos no config
+EXPERIMENT_NAME = config.EXPERIMENT_NAME
 RUN_NAME = "Treino_Lightning_Padrao"
 
-# Parâmetros Padrão (Imutáveis)
-DEFAULT_PARAMS = {
-    "seq_length": 60,
-    "batch_size": 32,
-    "hidden_size": 64,
-    "num_layers": 2,
-    "learning_rate": 0.001,
-    "num_epochs": 50,
-}
+# Parâmetros Padrão (Vêm do config.py para evitar duplicação)
+DEFAULT_PARAMS = config.DEFAULT_HYPERPARAMS.copy()
 
 # Parâmetros Atuais (Podem ser alterados pela API em tempo de execução)
+# Mantemos esta variável aqui pois ela atua como "estado" da aplicação em execução
 CURRENT_PARAMS = DEFAULT_PARAMS.copy()
-
-# Caminhos
-DATA_DIR = os.path.join("data", "02_processed")
-TRAIN_PATH = os.path.join(DATA_DIR, "train_scaled.npy")
-VALID_PATH = os.path.join(DATA_DIR, "valid_scaled.npy")
-# Caminho para salvar o modelo compatível com a API
-MODEL_SAVE_PATH = os.path.join("models", "lstm_model.pth")
 
 
 # ==========================================
@@ -114,12 +103,12 @@ def train(override_params: dict = None):
 
     logger.info(f"Parâmetros em uso: {params}")
 
-    # 2. Carregar Dados
+    # 2. Carregar Dados (Usa caminhos do config)
     try:
-        train_data = np.load(TRAIN_PATH)
-        valid_data = np.load(VALID_PATH)
+        train_data = np.load(config.TRAIN_DATA_PATH)
+        valid_data = np.load(config.VALID_DATA_PATH)
     except FileNotFoundError:
-        logger.error("Dados .npy não encontrados.")
+        logger.error(f"Dados .npy não encontrados em {config.PROCESSED_DATA_DIR}.")
         return
 
     # Usa params['seq_length'] dinamicamente
@@ -141,9 +130,10 @@ def train(override_params: dict = None):
     mlf_logger.log_hyperparams(params)  # Registra parâmetros efetivos
 
     # 4. Callbacks (Boas práticas de Engenharia)
+    # Salva checkpoints no diretório configurado
     checkpoint_callback = ModelCheckpoint(
         monitor="valid_loss",
-        dirpath="models/checkpoints",
+        dirpath=config.CHECKPOINTS_DIR,
         filename="best-checkpoint",
         save_top_k=1,
         mode="min",
@@ -182,12 +172,13 @@ def train(override_params: dict = None):
         checkpoint_callback.best_model_path
     )
 
-    torch.save(best_model.model.state_dict(), MODEL_SAVE_PATH)
-    logger.info(f"Modelo compatível com API salvo em: {MODEL_SAVE_PATH}")
+    # Salva no caminho padrão que a API lê (definido no config)
+    torch.save(best_model.model.state_dict(), config.MODEL_PATH)
+    logger.info(f"Modelo compatível com API salvo em: {config.MODEL_PATH}")
 
     # Log do artefato final no MLflow
     mlf_logger.experiment.log_artifact(
-        mlf_logger.run_id, MODEL_SAVE_PATH, artifact_path="model_pth"
+        mlf_logger.run_id, config.MODEL_PATH, artifact_path="model_pth"
     )
 
 

@@ -1,21 +1,13 @@
 import yfinance as yf
 import pandas as pd
 import os
+import sys
 from scripts import logger
 
-# --- Configurações Iniciais ---
+# Adiciona o diretório raiz ao sys.path para permitir importação de src
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-# Companhia Energética de Minas Gerais - CEMIG
-SYMBOL = "CMIG4.SA"
-
-# Datas de início e fim da base
-START_DATE = "2018-01-01"
-END_DATE = "2025-10-31"
-
-# Caminho para salvar os dados (Data Lake - Raw)
-RAW_DATA_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "data", "01_raw", f"{SYMBOL}_data_raw.csv"
-)
+from src import config
 
 # --- Função Principal de Coleta ---
 
@@ -56,7 +48,7 @@ def download_stock_data(symbol: str, start: str, end: str, output_path: str):
         # Filtra o DataFrame para manter apenas as colunas existentes na lista
         df_cleaned = df[[col for col in cols_to_keep if col in df.columns]]
 
-        # Garantir que o diretório de saída exista
+        # Garantir que o diretório de saída exista (Usa caminho do config)
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
         # 6. Salvar o CSV limpo (sem índice do pandas)
@@ -72,6 +64,10 @@ def download_stock_data(symbol: str, start: str, end: str, output_path: str):
 # --- Execução do Script ---
 
 if __name__ == "__main__":
+    # Utiliza constantes centralizadas no src/config.py
     download_stock_data(
-        symbol=SYMBOL, start=START_DATE, end=END_DATE, output_path=RAW_DATA_PATH
+        symbol=config.SYMBOL,
+        start=config.DATE_START,
+        end=config.DATE_END,
+        output_path=config.RAW_DATA_PATH,
     )

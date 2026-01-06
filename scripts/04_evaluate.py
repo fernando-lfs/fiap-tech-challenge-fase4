@@ -16,21 +16,15 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.dataset import TimeSeriesDataset
 from src.model import LSTMModel
+from src import config # Importação das configurações centralizadas
+
 # Importação dinâmica dos parâmetros atuais para evitar inconsistência (DRY)
+# Mantemos a importação do script de treino pois ele detém o estado "atual" dos parâmetros
 from scripts.03_train import CURRENT_PARAMS 
 
 # --- Configurações de Ambiente ---
-EXPERIMENT_NAME = "Experimento_LSTM_CMIG4"
+EXPERIMENT_NAME = config.EXPERIMENT_NAME
 RUN_NAME = "Avaliacao_Teste"
-
-# Caminhos
-DATA_DIR = os.path.join("data", "02_processed")
-TEST_PATH = os.path.join(DATA_DIR, "test_scaled.npy")
-MODEL_PATH = os.path.join("models", "lstm_model.pth")
-SCALER_PATH = os.path.join("models", "scaler.joblib")
-RESULTS_DIR = "results"
-os.makedirs(RESULTS_DIR, exist_ok=True)
-
 
 def calculate_mape(y_true, y_pred):
     """Calcula o Erro Percentual Absoluto Médio."""
@@ -53,9 +47,13 @@ def evaluate():
     with mlflow.start_run(run_name=RUN_NAME):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        # 1. Carga de Dados
-        test_data = np.load(TEST_PATH)
-        scaler = joblib.load(SCALER_PATH)
+        # 1. Carga de Dados (Usa caminhos do config)
+        try:
+            test_data = np.load(config.TEST_DATA_PATH)
+            scaler = joblib.load(config.SCALER_PATH)
+        except FileNotFoundError as e:
+            logger.error(f"Arquivo necessário não encontrado: {e}")
+            return
         
         # O dataset agora recebe o seq_length dinâmico
         test_dataset = TimeSeriesDataset(test_data, seq_length=seq_length)
@@ -67,7 +65,8 @@ def evaluate():
             hidden_size=hidden_size, 
             num_layers=num_layers
         )
-        model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
+        # Carrega pesos do caminho configurado
+        model.load_state_dict(torch.load(config.MODEL_PATH, map_location=device))
         model.to(device)
         model.eval()
 
@@ -106,11 +105,12 @@ def evaluate():
         plt.figure(figsize=(12, 6))
         plt.plot(actual_real, label="Real", color="blue", alpha=0.7)
         plt.plot(pred_real, label="Previsto", color="red", alpha=0.7)
-        plt.title(f"Resultado Final (Teste) - CMIG4 (Window: {seq_length})")
+        plt.title(f"Resultado Final (Teste) - {config.SYMBOL} (Window: {seq_length})")
         plt.legend()
         plt.grid(True)
 
-        plot_path = os.path.join(RESULTS_DIR, "prediction_plot.png")
+        # Salva no diretório de resultados configurado
+        plot_path = os.path.join(config.RESULTS_DIR, "prediction_plot.png")
         plt.savefig(plot_path)
 
         # Log do gráfico como artefato no servidor de experimentos
