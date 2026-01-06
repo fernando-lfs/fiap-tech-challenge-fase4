@@ -2,12 +2,12 @@ import yfinance as yf
 import pandas as pd
 import os
 import sys
-from scripts import logger
 
 # Adiciona o diretório raiz ao sys.path para permitir importação de src
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src import config
+from scripts import logger
 
 # --- Função Principal de Coleta ---
 
@@ -33,7 +33,9 @@ def download_stock_data(symbol: str, start: str, end: str, output_path: str):
         df = ticker.history(start=start, end=end)
 
         if df.empty:
-            print(f"Nenhum dado encontrado para {symbol} no período.")
+            logger.error(
+                f"Nenhum dado encontrado para {symbol}. Verifique o ticker ou as datas."
+            )
             return
 
         # 3. Transforma o índice (Date) em uma coluna regular 'Date'
@@ -58,7 +60,7 @@ def download_stock_data(symbol: str, start: str, end: str, output_path: str):
         logger.info(f"Total de {len(df_cleaned)} registros baixados.")
 
     except Exception as e:
-        logger.error(f"Erro ao baixar os dados: {e}")
+        logger.error(f"Erro crítico ao baixar os dados: {e}")
 
 
 # --- Execução do Script ---

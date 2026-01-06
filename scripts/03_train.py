@@ -9,27 +9,25 @@ import numpy as np
 import os
 import sys
 import mlflow
-from scripts import logger
 
 # Adiciona diretório raiz ao path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.dataset import TimeSeriesDataset
 from src.model import LSTMModel
-from src import config  # Importação das configurações centralizadas
+from src import config
+from scripts import logger
 
 # ==========================================
 # CONFIGURAÇÕES
 # ==========================================
-# Usa nomes definidos no config
 EXPERIMENT_NAME = config.EXPERIMENT_NAME
 RUN_NAME = "Treino_Lightning_Padrao"
 
-# Parâmetros Padrão (Vêm do config.py para evitar duplicação)
+# Parâmetros Padrão
 DEFAULT_PARAMS = config.DEFAULT_HYPERPARAMS.copy()
 
-# Parâmetros Atuais (Podem ser alterados pela API em tempo de execução)
-# Mantemos esta variável aqui pois ela atua como "estado" da aplicação em execução
+# Parâmetros Atuais (Estado global para API)
 CURRENT_PARAMS = DEFAULT_PARAMS.copy()
 
 
@@ -43,10 +41,9 @@ class LSTMLightningModule(pl.LightningModule):
 
     def __init__(self, hidden_size, num_layers, learning_rate):
         super().__init__()
-        self.save_hyperparameters()  # Salva hparams automaticamente no MLflow/Checkpoint
+        self.save_hyperparameters()
         self.learning_rate = learning_rate
 
-        # Instancia a arquitetura original (definida em src/model.py)
         self.model = LSTMModel(
             input_size=1, hidden_size=hidden_size, num_layers=num_layers
         )
@@ -59,8 +56,6 @@ class LSTMLightningModule(pl.LightningModule):
         inputs, targets = batch
         outputs = self(inputs)
         loss = self.criterion(outputs, targets)
-
-        # Log automático (step-level)
         self.log(
             "train_loss", loss, on_step=False, on_epoch=True, prog_bar=True, logger=True
         )
@@ -70,8 +65,6 @@ class LSTMLightningModule(pl.LightningModule):
         inputs, targets = batch
         outputs = self(inputs)
         loss = self.criterion(outputs, targets)
-
-        # Log automático (epoch-level)
         self.log(
             "valid_loss", loss, on_step=False, on_epoch=True, prog_bar=True, logger=True
         )
@@ -90,28 +83,32 @@ def train(override_params: dict = None):
     Args:
         override_params (dict): Dicionário com novos hiperparâmetros vindos da API.
     """
+    # Garante reprodutibilidade
+    pl.seed_everything(config.RANDOM_SEED)
+
     logger.info("=== Iniciando Treinamento com PyTorch Lightning + MLflow ===")
 
     # 1. Configuração Dinâmica de Parâmetros
-    # Começa com os parâmetros atuais globais
     params = CURRENT_PARAMS.copy()
-
-    # Se a API enviou overrides, atualiza os parâmetros para ESTA execução
     if override_params:
         params.update(override_params)
         logger.info(f"Parâmetros sobrescritos para este run: {override_params}")
 
     logger.info(f"Parâmetros em uso: {params}")
 
-    # 2. Carregar Dados (Usa caminhos do config)
+    # 2. Carregar Dados
     try:
+        if not os.path.exists(config.TRAIN_DATA_PATH):
+            raise FileNotFoundError(
+                f"Dados não encontrados em {config.TRAIN_DATA_PATH}. Execute o preprocessamento."
+            )
+
         train_data = np.load(config.TRAIN_DATA_PATH)
         valid_data = np.load(config.VALID_DATA_PATH)
-    except FileNotFoundError:
-        logger.error(f"Dados .npy não encontrados em {config.PROCESSED_DATA_DIR}.")
+    except Exception as e:
+        logger.error(f"Erro crítico ao carregar dados: {e}")
         return
 
-    # Usa params['seq_length'] dinamicamente
     train_dataset = TimeSeriesDataset(train_data, seq_length=int(params["seq_length"]))
     valid_dataset = TimeSeriesDataset(valid_data, seq_length=int(params["seq_length"]))
 
@@ -127,10 +124,9 @@ def train(override_params: dict = None):
 
     # 3. Configurar Logger do MLflow
     mlf_logger = MLFlowLogger(experiment_name=EXPERIMENT_NAME, run_name=RUN_NAME)
-    mlf_logger.log_hyperparams(params)  # Registra parâmetros efetivos
+    mlf_logger.log_hyperparams(params)
 
-    # 4. Callbacks (Boas práticas de Engenharia)
-    # Salva checkpoints no diretório configurado
+    # 4. Callbacks
     checkpoint_callback = ModelCheckpoint(
         monitor="valid_loss",
         dirpath=config.CHECKPOINTS_DIR,
@@ -139,12 +135,11 @@ def train(override_params: dict = None):
         mode="min",
     )
 
-    # Early Stopping
     early_stop_callback = EarlyStopping(
         monitor="valid_loss", patience=10, verbose=True, mode="min"
     )
 
-    # 5. Inicializar Modelo Lightning (Usa parâmetros dinâmicos)
+    # 5. Inicializar Modelo
     model_system = LSTMLightningModule(
         hidden_size=int(params["hidden_size"]),
         num_layers=int(params["num_layers"]),
@@ -156,7 +151,7 @@ def train(override_params: dict = None):
         max_epochs=int(params["num_epochs"]),
         logger=mlf_logger,
         callbacks=[checkpoint_callback, early_stop_callback],
-        accelerator="auto",  # Detecta GPU/CPU automaticamente
+        accelerator="auto",
         devices=1,
         log_every_n_steps=5,
     )
@@ -165,14 +160,14 @@ def train(override_params: dict = None):
     trainer.fit(model_system, train_loader, valid_loader)
 
     logger.info(f"Melhor loss de validação: {checkpoint_callback.best_model_score}")
-    logger.info(f"Checkpoint salvo em: {checkpoint_callback.best_model_path}")
 
     # 8. EXPORTAÇÃO PARA API
+    # Carrega o melhor checkpoint
     best_model = LSTMLightningModule.load_from_checkpoint(
         checkpoint_callback.best_model_path
     )
 
-    # Salva no caminho padrão que a API lê (definido no config)
+    # Salva apenas os pesos do modelo interno (nn.Module) para ser leve na API
     torch.save(best_model.model.state_dict(), config.MODEL_PATH)
     logger.info(f"Modelo compatível com API salvo em: {config.MODEL_PATH}")
 

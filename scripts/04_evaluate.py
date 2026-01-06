@@ -2,52 +2,50 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
 import joblib
 import os
 import sys
 import mlflow
 from sklearn.metrics import mean_absolute_error, mean_squared_error
-from scripts import logger
 
-# Adiciona diretório raiz ao path para garantir importações do src
+# Adiciona diretório raiz ao path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.dataset import TimeSeriesDataset
 from src.model import LSTMModel
-from src import config # Importação das configurações centralizadas
-
-# Importação dinâmica dos parâmetros atuais para evitar inconsistência (DRY)
-# Mantemos a importação do script de treino pois ele detém o estado "atual" dos parâmetros
+from src import config
+from scripts import logger
+# Importação dinâmica dos parâmetros atuais
 from scripts.03_train import CURRENT_PARAMS 
 
-# --- Configurações de Ambiente ---
 EXPERIMENT_NAME = config.EXPERIMENT_NAME
 RUN_NAME = "Avaliacao_Teste"
 
 def calculate_mape(y_true, y_pred):
     """Calcula o Erro Percentual Absoluto Médio."""
-    return np.mean(np.abs((y_true - y_pred) / y_true)) * 100
-
+    # Evita divisão por zero adicionando epsilon
+    return np.mean(np.abs((y_true - y_pred) / (y_true + 1e-8))) * 100
 
 def evaluate():
     logger.info("=== Iniciando Avaliação (Parâmetros Dinâmicos) ===")
 
-    # Extração dos parâmetros atuais definidos no módulo de treino
-    # Isso garante que a avaliação use a mesma arquitetura salva no .pth
+    if not os.path.exists(config.MODEL_PATH):
+        logger.error(f"Modelo não encontrado em {config.MODEL_PATH}. Treine o modelo primeiro.")
+        return
+
     seq_length = int(CURRENT_PARAMS["seq_length"])
     batch_size = int(CURRENT_PARAMS["batch_size"])
     hidden_size = int(CURRENT_PARAMS["hidden_size"])
     num_layers = int(CURRENT_PARAMS["num_layers"])
 
-    # Configura para logar no mesmo experimento do MLflow
     mlflow.set_experiment(EXPERIMENT_NAME)
 
     with mlflow.start_run(run_name=RUN_NAME):
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # Usa device centralizado
+        device = config.DEVICE
 
-        # 1. Carga de Dados (Usa caminhos do config)
+        # 1. Carga de Dados
         try:
             test_data = np.load(config.TEST_DATA_PATH)
             scaler = joblib.load(config.SCALER_PATH)
@@ -55,22 +53,20 @@ def evaluate():
             logger.error(f"Arquivo necessário não encontrado: {e}")
             return
         
-        # O dataset agora recebe o seq_length dinâmico
         test_dataset = TimeSeriesDataset(test_data, seq_length=seq_length)
         test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
-        # 2. Carga do Modelo (Arquitetura instanciada com parâmetros dinâmicos)
+        # 2. Carga do Modelo
         model = LSTMModel(
             input_size=1, 
             hidden_size=hidden_size, 
             num_layers=num_layers
         )
-        # Carrega pesos do caminho configurado
         model.load_state_dict(torch.load(config.MODEL_PATH, map_location=device))
         model.to(device)
         model.eval()
 
-        # 3. Inferência (Loop de Teste)
+        # 3. Inferência
         predictions = []
         actuals = []
         with torch.no_grad():
@@ -80,7 +76,7 @@ def evaluate():
                 predictions.extend(outputs.cpu().numpy())
                 actuals.extend(targets.numpy())
 
-        # 4. Desnormalização (Conversão para valores monetários reais)
+        # 4. Desnormalização
         predictions = np.array(predictions).reshape(-1, 1)
         actuals = np.array(actuals).reshape(-1, 1)
         pred_real = scaler.inverse_transform(predictions)
@@ -95,13 +91,12 @@ def evaluate():
             f"Métricas Finais - MAE: {mae:.4f} | RMSE: {rmse:.4f} | MAPE: {mape:.4f}%"
         )
 
-        # Registro no MLflow para versionamento e comparação posterior
         mlflow.log_param("seq_length_eval", seq_length)
         mlflow.log_metric("test_mae", mae)
         mlflow.log_metric("test_rmse", rmse)
         mlflow.log_metric("test_mape", mape)
 
-        # 6. Geração do Gráfico de Performance
+        # 6. Geração do Gráfico
         plt.figure(figsize=(12, 6))
         plt.plot(actual_real, label="Real", color="blue", alpha=0.7)
         plt.plot(pred_real, label="Previsto", color="red", alpha=0.7)
@@ -109,14 +104,10 @@ def evaluate():
         plt.legend()
         plt.grid(True)
 
-        # Salva no diretório de resultados configurado
         plot_path = os.path.join(config.RESULTS_DIR, "prediction_plot.png")
         plt.savefig(plot_path)
-
-        # Log do gráfico como artefato no servidor de experimentos
         mlflow.log_artifact(plot_path)
         logger.info("Avaliação concluída e registrada no MLflow.")
-
 
 if __name__ == "__main__":
     evaluate()

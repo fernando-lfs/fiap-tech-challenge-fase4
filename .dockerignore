@@ -1,19 +1,33 @@
-# Ambiente virtual e cache
+# Git
+.git
+.gitignore
+.dockerignore
+
+# Ambientes Virtuais e Cache Python
 .venv
 __pycache__
 *.pyc
+.python-version
 
-# Git
-.git
-
-# Dados brutos (apenas os modelos processados são necessários para a API)
+# Dados
+# Ignoramos dados brutos (não usados na inferência)
 data/01_raw/
+# Ignoramos resultados de plots
 results/
+# Ignoramos testes
 tests/
 
-# MLflow local database
+# Logs e Bancos de Dados Locais
+*.log
 mlflow.db
+mlruns/
+lightning_logs/
 
-# PyTorch/Lightning cache
-.torch/
-.lightning/
+# Configurações de IDE
+.vscode/
+.idea/
+
+# Documentação de build
+Dockerfile
+README.md
+CONTRIBUTING.md

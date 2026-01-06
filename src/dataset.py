@@ -11,23 +11,28 @@ class TimeSeriesDataset(Dataset):
 
     def __init__(self, data: np.ndarray, seq_length: int = 60):
         """
+        Inicializa o dataset.
+
         Args:
             data (np.ndarray): Array numpy com os dados normalizados (N, 1).
             seq_length (int): Tamanho da janela de sequência (ex: 60 dias).
         """
         # Convertendo para tensor float32 (padrão do PyTorch)
-        self.data = torch.tensor(data, dtype=torch.float32)
+        # Clone().detach() é uma prática segura para evitar warnings de cópia de memória
+        self.data = torch.tensor(data, dtype=torch.float32).clone().detach()
         self.seq_length = seq_length
 
-    def __len__(self):
+    def __len__(self) -> int:
         """
         Retorna o número total de amostras possíveis.
         Se temos 100 dias e usamos 60 dias para prever o próximo,
         temos 100 - 60 = 40 amostras.
         """
+        if len(self.data) <= self.seq_length:
+            return 0
         return len(self.data) - self.seq_length
 
-    def __getitem__(self, index):
+    def __getitem__(self, index: int):
         """
         Retorna uma tupla (sequência, alvo) para um índice dado.
         """
