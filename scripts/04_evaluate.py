@@ -7,6 +7,7 @@ import joblib
 import os
 import sys
 import mlflow
+import importlib  # Necessário para importar arquivos que começam com número
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 # Adiciona diretório raiz ao path
@@ -16,22 +17,30 @@ from src.dataset import TimeSeriesDataset
 from src.model import LSTMModel
 from src import config
 from scripts import logger
-# Importação dinâmica dos parâmetros atuais
-from scripts.03_train import CURRENT_PARAMS 
+
+# --- CORREÇÃO: Importação Dinâmica ---
+# Python não aceita "from scripts.03_train import..." diretamente
+train_module = importlib.import_module("scripts.03_train")
+CURRENT_PARAMS = train_module.CURRENT_PARAMS
+# -------------------------------------
 
 EXPERIMENT_NAME = config.EXPERIMENT_NAME
 RUN_NAME = "Avaliacao_Teste"
+
 
 def calculate_mape(y_true, y_pred):
     """Calcula o Erro Percentual Absoluto Médio."""
     # Evita divisão por zero adicionando epsilon
     return np.mean(np.abs((y_true - y_pred) / (y_true + 1e-8))) * 100
 
+
 def evaluate():
     logger.info("=== Iniciando Avaliação (Parâmetros Dinâmicos) ===")
 
     if not os.path.exists(config.MODEL_PATH):
-        logger.error(f"Modelo não encontrado em {config.MODEL_PATH}. Treine o modelo primeiro.")
+        logger.error(
+            f"Modelo não encontrado em {config.MODEL_PATH}. Treine o modelo primeiro."
+        )
         return
 
     seq_length = int(CURRENT_PARAMS["seq_length"])
@@ -52,16 +61,12 @@ def evaluate():
         except FileNotFoundError as e:
             logger.error(f"Arquivo necessário não encontrado: {e}")
             return
-        
+
         test_dataset = TimeSeriesDataset(test_data, seq_length=seq_length)
         test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
         # 2. Carga do Modelo
-        model = LSTMModel(
-            input_size=1, 
-            hidden_size=hidden_size, 
-            num_layers=num_layers
-        )
+        model = LSTMModel(input_size=1, hidden_size=hidden_size, num_layers=num_layers)
         model.load_state_dict(torch.load(config.MODEL_PATH, map_location=device))
         model.to(device)
         model.eval()
@@ -108,6 +113,7 @@ def evaluate():
         plt.savefig(plot_path)
         mlflow.log_artifact(plot_path)
         logger.info("Avaliação concluída e registrada no MLflow.")
+
 
 if __name__ == "__main__":
     evaluate()

@@ -10,7 +10,7 @@ package-mode = false
 python = ">=3.11,<3.15"
 yfinance = "^0.2.66"
 scikit-learn = "^1.7.2"
-numpy = "^2.3.4"
+numpy = "<2.0.0"
 joblib = "^1.5.2"
 torch = "^2.9.1"
 matplotlib = "^3.10.7"

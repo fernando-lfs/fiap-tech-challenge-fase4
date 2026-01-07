@@ -176,9 +176,9 @@ O modelo atual (LSTM 2-Layers, Hidden=64) apresentou nos dados de teste:
 
 | Métrica | Valor | Descrição |
 | :--- | :--- | :--- |
-| **MAPE** | **~1.56%** | Erro percentual médio absoluto. |
-| **RMSE** | **~0.19** | Raiz do erro quadrático médio (na escala real em R$). |
-
+| **MAPE** | **1.94%** | Erro percentual médio absoluto. |
+| **RMSE** | **0.25** | Raiz do erro quadrático médio (na escala real em R$). |
+| **MAE**  | **0.20** | Erro absoluto médio (na escala real em R$). |
 ---
 
 ## ☁️ Proposta de Escalabilidade

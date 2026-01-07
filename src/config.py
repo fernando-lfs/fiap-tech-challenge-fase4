@@ -35,6 +35,8 @@ os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs(CHECKPOINTS_DIR, exist_ok=True)
 
 # --- 3. Definição de Arquivos Específicos ---
+SYMBOL = "CMIG4.SA"
+
 # Arquivos de Dados
 RAW_DATA_PATH = os.path.join(RAW_DATA_DIR, f"{SYMBOL}_data_raw.csv")
 TRAIN_DATA_PATH = os.path.join(PROCESSED_DATA_DIR, "train_scaled.npy")
@@ -47,8 +49,6 @@ SCALER_PATH = os.path.join(MODELS_DIR, "scaler.joblib")
 STATS_PATH = os.path.join(MODELS_DIR, "baseline_stats.json")
 
 # --- 4. Configurações de Dados ---
-# Configurações do Ativo
-SYMBOL = "CMIG4.SA"
 FEATURE_COLUMN = "Close"
 DATE_START = "2018-01-01"
 DATE_END = "2025-12-31"
