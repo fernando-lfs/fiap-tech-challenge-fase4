@@ -2,14 +2,15 @@
 
 ![Python](https://img.shields.io/badge/Python-3.11-blue?style=for-the-badge&logo=python)
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.0-ee4c2c?style=for-the-badge&logo=pytorch)
-![Docker](https://img.shields.io/badge/Docker-Container-2496ed?style=for-the-badge&logo=docker)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.109-009688?style=for-the-badge&logo=fastapi)
+![Pytest](https://img.shields.io/badge/Pytest-Testing-yellow?style=for-the-badge&logo=pytest)
+![Docker](https://img.shields.io/badge/Docker-Container-2496ed?style=for-the-badge&logo=docker)
 
 > **Pós-Graduação em Deep Learning & AI - FIAP**
 
 Este projeto apresenta uma solução completa de **End-to-End Machine Learning** para a previsão de preços de fechamento de ações da **CEMIG (CMIG4.SA)**.
 
-A arquitetura abrange desde a engenharia de dados até o deploy produtivo, utilizando **LSTM (Long Short-Term Memory)** para modelagem temporal, **MLflow** para rastreamento de experimentos e **FastAPI** para servir o modelo, tudo orquestrado via **Docker**.
+A arquitetura abrange desde a engenharia de dados até o deploy produtivo, utilizando **LSTM (Long Short-Term Memory)** para modelagem temporal, **MLflow** para rastreamento de experimentos e **FastAPI** para servir o modelo, tudo orquestrado via **Docker** e validado com testes de integração.
 
 ---
 
@@ -17,6 +18,7 @@ A arquitetura abrange desde a engenharia de dados até o deploy produtivo, utili
 
 *   **Pipeline Automatizado:** Scripts modulares para ETL (Extração e Transformação), Treinamento e Avaliação.
 *   **Deep Learning Moderno:** Uso de **PyTorch Lightning** para estruturar o código de treino, garantindo legibilidade e reprodutibilidade (seeds fixas).
+*   **Qualidade de Software:** Suíte de **testes de integração** (`pytest`) que valida a API, o carregamento de artefatos e a lógica de detecção de anomalias antes do deploy.
 *   **MLOps & Tracking:** Integração nativa com **MLflow** para registrar métricas (MAE, RMSE, MAPE), hiperparâmetros e artefatos do modelo.
 *   **API Inteligente:**
     *   **Detecção de Data Drift:** O endpoint de predição monitora estatisticamente a entrada. Se os dados desviarem do padrão de treino (ex: alta volatilidade), um alerta é retornado.
@@ -32,6 +34,7 @@ A arquitetura abrange desde a engenharia de dados até o deploy produtivo, utili
 | **Framework DL** | **PyTorch + Lightning** | O PyTorch oferece flexibilidade dinâmica. O Lightning foi adotado para remover *boilerplate* (loops manuais), padronizar o código e facilitar o uso de *callbacks* (Early Stopping). |
 | **Tracking** | **MLflow** | Ferramenta open-source padrão de mercado, agnóstica de infraestrutura, permitindo rastreabilidade total dos experimentos. |
 | **API** | **FastAPI** | Alta performance (ASGI), validação automática de dados com Pydantic e suporte nativo a processamento assíncrono. |
+| **Testes** | **Pytest + TestClient** | Padrão da indústria para testes em Python. O TestClient permite simular requisições à API sem necessidade de subir o servidor, validando o ciclo de vida (`lifespan`) da aplicação. |
 | **Drift Detection** | **Estatística (In-App)** | Implementação de um detector leve baseado em estatísticas descritivas (Baseline JSON). Evita a complexidade de ferramentas externas pesadas para este escopo, garantindo monitoramento em tempo real. |
 | **Configuração** | **Single Source of Truth** | Uso de um arquivo `src/config.py` centralizado para evitar "números mágicos" e inconsistências de caminhos entre scripts e API. |
 
@@ -62,6 +65,8 @@ A arquitetura abrange desde a engenharia de dados até o deploy produtivo, utili
 │   ├── config.py         # Configurações Globais
 │   ├── dataset.py        # Classe Dataset (PyTorch)
 │   └── model.py          # Arquitetura LSTM
+├── tests/                # Testes Automatizados
+│   └── test_integration.py
 ├── Dockerfile            # Definição da Imagem
 ├── pyproject.toml        # Gerenciamento de Dependências (Poetry)
 └── README.md             # Documentação
@@ -125,13 +130,19 @@ Siga esta ordem para reproduzir todo o ciclo de vida do modelo.
     python -m scripts.04_evaluate
     ```
 
-3.  **Visualizar Experimentos:**
+3.  **Validação (Testes Automatizados):**
+    Execute a suíte de testes para garantir que a API e o modelo estão integrados corretamente.
+    ```bash
+    pytest -v
+    ```
+
+4.  **Visualizar Experimentos:**
     ```bash
     mlflow ui
     # Acesse http://127.0.0.1:5000
     ```
 
-4.  **Iniciar API:**
+5.  **Iniciar API:**
     ```bash
     uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
     ```
@@ -179,6 +190,7 @@ O modelo atual (LSTM 2-Layers, Hidden=64) apresentou nos dados de teste:
 | **MAPE** | **1.94%** | Erro percentual médio absoluto. |
 | **RMSE** | **0.25** | Raiz do erro quadrático médio (na escala real em R$). |
 | **MAE**  | **0.20** | Erro absoluto médio (na escala real em R$). |
+
 ---
 
 ## ☁️ Proposta de Escalabilidade
