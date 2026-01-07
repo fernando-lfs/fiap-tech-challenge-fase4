@@ -6,6 +6,7 @@ import time
 import sys
 import os
 import json
+import importlib  # Necessário para importação dinâmica
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
 from pydantic import BaseModel
@@ -17,16 +18,20 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from src.model import LSTMModel
 from src import config
 from api import logger, __app__, __version__
-# Importação direta do script de treino para acesso aos parâmetros e função de treino
-from scripts import "03_train" as training_script
+
+# --- CORREÇÃO: Importação Dinâmica ---
+# Importa o script de treino dinamicamente pois o nome começa com número
+training_script = importlib.import_module("scripts.03_train")
+# -------------------------------------
 
 # Variáveis globais de estado
 ml_components = {
     "model": None,
     "scaler": None,
     "baseline_stats": None,
-    "training_active": False
+    "training_active": False,
 }
+
 
 # --- Lógica de Carregamento (Lifespan) ---
 def load_artifacts():
@@ -36,14 +41,16 @@ def load_artifacts():
         if os.path.exists(config.SCALER_PATH):
             ml_components["scaler"] = joblib.load(config.SCALER_PATH)
             logger.info("Scaler carregado com sucesso.")
-        
+
         # 2. Carregar Estatísticas de Drift
         if os.path.exists(config.STATS_PATH):
             with open(config.STATS_PATH, "r") as f:
                 ml_components["baseline_stats"] = json.load(f)
             logger.info("Baseline estatístico carregado.")
         else:
-            logger.warning("Baseline stats não encontrado. Monitoramento de Drift inativo.")
+            logger.warning(
+                "Baseline stats não encontrado. Monitoramento de Drift inativo."
+            )
 
         # 3. Carregar Modelo
         if os.path.exists(config.MODEL_PATH):
@@ -54,7 +61,9 @@ def load_artifacts():
                 num_layers=int(params["num_layers"]),
             )
             # Usa config.DEVICE para consistência
-            model.load_state_dict(torch.load(config.MODEL_PATH, map_location=config.DEVICE))
+            model.load_state_dict(
+                torch.load(config.MODEL_PATH, map_location=config.DEVICE)
+            )
             model.to(config.DEVICE)
             model.eval()
             ml_components["model"] = model
@@ -65,6 +74,7 @@ def load_artifacts():
     except Exception as e:
         logger.error(f"Erro crítico no carregamento de artefatos: {e}")
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Executado na inicialização
@@ -74,22 +84,27 @@ async def lifespan(app: FastAPI):
     # Executado no desligamento (limpeza se necessário)
     logger.info("Desligando API...")
 
+
 app = FastAPI(
     title=__app__,
     description="API LSTM com Monitoramento de Data Drift",
     version=__version__,
-    lifespan=lifespan
+    lifespan=lifespan,
 )
+
 
 # --- Pydantic Models ---
 class PredictionRequest(BaseModel):
     last_prices: List[float]
 
+
 class TrainRequest(BaseModel):
     hyperparameters: Optional[Dict[str, float]] = None
 
+
 class ConfigResponse(BaseModel):
     current_params: Dict[str, float]
+
 
 # --- Middleware ---
 @app.middleware("http")
@@ -103,7 +118,9 @@ async def monitor_performance(request: Request, call_next):
     )
     return response
 
+
 # --- Lógica de Negócio ---
+
 
 def detect_drift(input_data: List[float]) -> Dict:
     stats = ml_components["baseline_stats"]
@@ -119,10 +136,14 @@ def detect_drift(input_data: List[float]) -> Dict:
     limit_min = stats["min"] * (1 - margin)
 
     if np.max(input_arr) > limit_max:
-        drift_reasons.append(f"Input Max ({np.max(input_arr):.2f}) > Histórico ({limit_max:.2f})")
+        drift_reasons.append(
+            f"Input Max ({np.max(input_arr):.2f}) > Histórico ({limit_max:.2f})"
+        )
 
     if np.min(input_arr) < limit_min:
-        drift_reasons.append(f"Input Min ({np.min(input_arr):.2f}) < Histórico ({limit_min:.2f})")
+        drift_reasons.append(
+            f"Input Min ({np.min(input_arr):.2f}) < Histórico ({limit_min:.2f})"
+        )
 
     input_std = np.std(input_arr)
     if input_std > (stats["std"] * 3):
@@ -133,6 +154,7 @@ def detect_drift(input_data: List[float]) -> Dict:
         logger.warning(f"DATA DRIFT DETECTADO: {drift_reasons}")
 
     return {"drift": is_drift, "reasons": drift_reasons}
+
 
 def background_train_task(params: dict):
     ml_components["training_active"] = True
@@ -146,11 +168,14 @@ def background_train_task(params: dict):
     finally:
         ml_components["training_active"] = False
 
+
 # --- Endpoints ---
+
 
 @app.get("/")
 def root():
     return {"app": __app__, "version": __version__, "status": "online"}
+
 
 @app.get("/health")
 def health_check():
@@ -166,6 +191,7 @@ def health_check():
     except Exception as e:
         return {"status": "unhealthy", "detail": str(e)}
 
+
 @app.post("/predict")
 def predict_next_day(request: PredictionRequest):
     model = ml_components["model"]
@@ -173,12 +199,13 @@ def predict_next_day(request: PredictionRequest):
 
     if not model or not scaler:
         raise HTTPException(
-            status_code=503, detail="Serviço indisponível (Modelo ou Scaler não carregados)."
+            status_code=503,
+            detail="Serviço indisponível (Modelo ou Scaler não carregados).",
         )
 
     input_data = request.last_prices
     expected_length = int(training_script.CURRENT_PARAMS["seq_length"])
-    
+
     if len(input_data) != expected_length:
         raise HTTPException(
             status_code=400,
@@ -213,24 +240,31 @@ def predict_next_day(request: PredictionRequest):
         logger.error(f"Erro na predição: {e}")
         raise HTTPException(status_code=500, detail="Erro interno no servidor.")
 
+
 @app.post("/train")
 def trigger_training(request: TrainRequest, background_tasks: BackgroundTasks):
     if ml_components["training_active"]:
         raise HTTPException(status_code=409, detail="Treino já está em andamento.")
-    
+
     params = request.hyperparameters or {}
     background_tasks.add_task(background_train_task, params)
     return {"status": "processing", "message": "Treino iniciado em background."}
+
 
 @app.get("/config", response_model=ConfigResponse)
 def get_config():
     return {"current_params": training_script.CURRENT_PARAMS}
 
+
 @app.post("/config")
 def update_config(request: TrainRequest):
     if request.hyperparameters:
         training_script.CURRENT_PARAMS.update(request.hyperparameters)
-    return {"message": "Configuração atualizada.", "current_params": training_script.CURRENT_PARAMS}
+    return {
+        "message": "Configuração atualizada.",
+        "current_params": training_script.CURRENT_PARAMS,
+    }
+
 
 @app.post("/model/reload")
 def reload_model():
