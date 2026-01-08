@@ -1,7 +1,7 @@
 import torch
 import joblib
 import numpy as np
-import pandas as pd  # Adicionado para corrigir o warning do Scaler
+import pandas as pd
 import psutil
 import time
 import sys
@@ -73,7 +73,22 @@ def load_artifacts():
 
         # 3. Carregar Modelo
         if os.path.exists(config.MODEL_PATH):
+            # --- CORREÇÃO: Carregar Configuração Persistida ---
+            # Antes de instanciar o modelo, verificamos se existe um arquivo de config
+            # que diz qual foi a arquitetura (hidden_size) usada no treino salvo.
+            if os.path.exists(config.MODEL_CONFIG_PATH):
+                try:
+                    with open(config.MODEL_CONFIG_PATH, "r") as f:
+                        saved_params = json.load(f)
+                    # Atualiza os parâmetros globais com o que estava salvo no disco
+                    training_script.CURRENT_PARAMS.update(saved_params)
+                    logger.info(f"Configuração do modelo restaurada: {saved_params}")
+                except Exception as e:
+                    logger.error(f"Erro ao ler config do modelo: {e}. Usando padrões.")
+
+            # Agora usamos os parâmetros corretos (restaurados ou padrão)
             params = training_script.CURRENT_PARAMS
+
             model = LSTMModel(
                 input_size=1,
                 hidden_size=int(params["hidden_size"]),
@@ -126,13 +141,16 @@ app = FastAPI(
 class PredictionRequest(BaseModel):
     last_prices: List[float] = Field(
         ...,
-        description="Lista contendo exatamente 60 preços de fechamento históricos (float). Atenção, a predição falhará se o tamanho for diferente.",
+        description=(
+            "Lista contendo EXATAMENTE 60 preços de fechamento históricos. "
+            "Este valor é mandatório pois corresponde ao hiperparâmetro 'seq_length' "
+            "definido na arquitetura da rede neural LSTM durante o treinamento."
+        ),
         min_length=60,
         max_length=60,
     )
 
     # Configuração para melhorar a usabilidade no Swagger UI
-    # AJUSTE: Valores alterados para ~7.0 para evitar Drift Warning falso positivo
     model_config = {
         "json_schema_extra": {
             "examples": [
@@ -320,7 +338,7 @@ def get_sample_data():
     responses={
         200: {"description": "Predição realizada com sucesso."},
         400: {
-            "description": "ERRO DE VALIDAÇÃO: Lista de entrada com tamanho incorreto (deve ser 60)."
+            "description": "ERRO DE VALIDAÇÃO: A lista de entrada não possui exatamente 60 valores."
         },
         503: {"description": "Modelo não carregado (Serviço Indisponível)."},
     },
@@ -363,10 +381,7 @@ def predict_next_day(request: PredictionRequest):
 
     try:
         # CORREÇÃO: Criar DataFrame para evitar UserWarning do sklearn
-        # O scaler foi treinado com DataFrame, então espera nomes de colunas.
         input_df = pd.DataFrame(input_data, columns=[config.FEATURE_COLUMN])
-
-        # Transforma usando o DataFrame (mantém nomes das features)
         input_scaled = scaler.transform(input_df)
 
         sequence = (

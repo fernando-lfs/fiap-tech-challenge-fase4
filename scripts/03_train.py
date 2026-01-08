@@ -9,7 +9,8 @@ import numpy as np
 import os
 import sys
 import mlflow
-from datetime import datetime  # Necessário para gerar Run Name dinâmico
+import json  # Necessário para salvar a config
+from datetime import datetime
 
 # Adiciona diretório raiz ao path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -41,8 +42,6 @@ class LSTMLightningModule(pl.LightningModule):
 
     def __init__(self, hidden_size, num_layers, learning_rate):
         super().__init__()
-        # Salva os hiperparâmetros automaticamente no MLflow/Checkpoints
-        # Isso substitui a necessidade de log manual externo
         self.save_hyperparameters()
         self.learning_rate = learning_rate
 
@@ -88,7 +87,6 @@ def train(override_params: dict = None):
     # Garante reprodutibilidade
     pl.seed_everything(config.RANDOM_SEED)
 
-    # Gera um nome de Run único baseado no timestamp para evitar conflitos no MLflow
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_name = f"Treino_{timestamp}"
 
@@ -133,10 +131,6 @@ def train(override_params: dict = None):
     # 4. Configurar Logger do MLflow
     mlf_logger = MLFlowLogger(experiment_name=EXPERIMENT_NAME, run_name=run_name)
 
-    # REMOVIDO: mlf_logger.log_hyperparams(params)
-    # Justificativa: O LSTMLightningModule já chama self.save_hyperparameters().
-    # Manter o log manual aqui causava conflito de tipos (float vs int) e erro de duplicidade no MLflow.
-
     # 5. Callbacks
     checkpoint_callback = ModelCheckpoint(
         monitor="valid_loss",
@@ -151,7 +145,6 @@ def train(override_params: dict = None):
     )
 
     # 6. Inicializar Modelo
-    # Conversão explícita para int garante que a arquitetura receba tipos corretos
     model_system = LSTMLightningModule(
         hidden_size=int(params["hidden_size"]),
         num_layers=int(params["num_layers"]),
@@ -182,6 +175,15 @@ def train(override_params: dict = None):
     # Salva apenas os pesos do modelo interno (nn.Module) para ser leve na API
     torch.save(best_model.model.state_dict(), config.MODEL_PATH)
     logger.info(f"Modelo compatível com API salvo em: {config.MODEL_PATH}")
+
+    # --- NOVO: Salva a configuração do modelo para persistência ---
+    try:
+        with open(config.MODEL_CONFIG_PATH, "w") as f:
+            json.dump(params, f, indent=4)
+        logger.info(f"Configuração do modelo salva em: {config.MODEL_CONFIG_PATH}")
+    except Exception as e:
+        logger.error(f"Erro ao salvar configuração do modelo: {e}")
+    # --------------------------------------------------------------
 
     # Log do artefato final no MLflow
     mlf_logger.experiment.log_artifact(
