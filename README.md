@@ -20,9 +20,10 @@ A arquitetura abrange desde a engenharia de dados até o deploy produtivo, utili
 *   **Deep Learning Moderno:** Uso de **PyTorch Lightning** para estruturar o código de treino, garantindo legibilidade e reprodutibilidade (seeds fixas).
 *   **Qualidade de Software:** Suíte de **testes de integração** (`pytest`) que valida a API, o carregamento de artefatos e a lógica de detecção de anomalias antes do deploy.
 *   **MLOps & Tracking:** Integração nativa com **MLflow** para registrar métricas (MAE, RMSE, MAPE), hiperparâmetros e artefatos do modelo.
-*   **API Inteligente:**
+*   **API Inteligente & Usabilidade:**
     *   **Detecção de Data Drift:** O endpoint de predição monitora estatisticamente a entrada. Se os dados desviarem do padrão de treino (ex: alta volatilidade), um alerta é retornado.
     *   **Treino Assíncrono:** O endpoint `/train` utiliza `BackgroundTasks`, permitindo que o modelo seja retreinado sem bloquear as inferências.
+    *   **Documentação Interativa:** O Swagger UI vem pré-configurado com exemplos de dados e endpoints auxiliares para facilitar o teste manual.
 *   **Containerização Segura:** Dockerfile otimizado (multi-stage concepts), rodando com usuário não-root para segurança.
 
 ---
@@ -54,7 +55,8 @@ A arquitetura abrange desde a engenharia de dados até o deploy produtivo, utili
 ├── models/               # Artefatos Persistidos
 │   ├── lstm_model.pth    # Pesos do Modelo (State Dict)
 │   ├── scaler.joblib     # Normalizador (MinMaxScaler)
-│   └── baseline_stats.json # Estatísticas para Drift Detection
+│   ├── baseline_stats.json # Estatísticas para Drift Detection
+│   └── metrics.json      # Métricas do último treino (para API)
 ├── results/              # Gráficos de Performance
 ├── scripts/              # Pipeline de Execução
 │   ├── 01_coleta_dados.py
@@ -151,30 +153,25 @@ Siga esta ordem para reproduzir todo o ciclo de vida do modelo.
 
 ## 🔌 Documentação da API
 
-A API expõe 5 endpoints estratégicos.
+A API expõe endpoints estratégicos documentados via Swagger UI.
 
 ### 1. `POST /predict` (Inferência)
 Recebe uma janela histórica e prevê o próximo dia.
+*   **Facilidade:** O Swagger já vem preenchido com um exemplo válido.
 *   **Input:** Lista com **60 preços** (float).
 *   **Output:** Preço previsto + Alerta de Drift.
 
-```json
-{
-  "predicted_price": 12.85,
-  "drift_warning": true,
-  "drift_details": ["Alta volatilidade detectada."]
-}
-```
+### 2. `GET /sample-data` (Auxiliar)
+Retorna os últimos 60 dias **reais** do dataset de teste.
+*   **Uso:** Copie o retorno deste endpoint e cole no `/predict` para validar o modelo com dados reais.
 
-### 2. `POST /train` (Retreino)
+### 3. `POST /train` (Treino & Tuning)
 Dispara um job de treinamento em **background**.
-*   **Input (Opcional):** Hiperparâmetros (`learning_rate`, `num_epochs`, etc).
+*   **Tuning:** Permite enviar novos hiperparâmetros (ex: `learning_rate`, `hidden_size`) no corpo da requisição para ajustar o modelo.
 
-### 3. `GET /config` & `POST /config`
-Visualiza ou atualiza os hiperparâmetros globais do sistema.
-
-### 4. `POST /model/reload`
-Recarrega os artefatos (modelo e scaler) do disco para a memória sem reiniciar o servidor (Hot Reload).
+### 4. `GET /model/info` (Monitoramento)
+Exibe o estado atual do modelo em produção.
+*   **Retorno:** Versão, hiperparâmetros ativos e **métricas de performance** (MAE, RMSE) do último treino realizado.
 
 ### 5. `GET /health`
 Monitoramento de saúde (Liveness Probe) e uso de recursos (CPU/RAM).
