@@ -47,6 +47,9 @@ TEST_DATA_PATH = os.path.join(PROCESSED_DATA_DIR, "test_scaled.npy")
 MODEL_PATH = os.path.join(MODELS_DIR, "lstm_model.pth")
 SCALER_PATH = os.path.join(MODELS_DIR, "scaler.joblib")
 STATS_PATH = os.path.join(MODELS_DIR, "baseline_stats.json")
+METRICS_PATH = os.path.join(
+    MODELS_DIR, "metrics.json"
+)  # Persistência de métricas para API
 
 # --- 4. Configurações de Dados ---
 FEATURE_COLUMN = "Close"

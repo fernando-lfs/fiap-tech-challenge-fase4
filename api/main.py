@@ -9,7 +9,7 @@ import json
 import importlib  # Necessário para importação dinâmica
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Dict, Optional
 
 # Adiciona raiz ao path
@@ -87,7 +87,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=__app__,
-    description="API LSTM com Monitoramento de Data Drift",
+    description="API LSTM com Monitoramento de Data Drift e Tuning",
     version=__version__,
     lifespan=lifespan,
 )
@@ -97,9 +97,42 @@ app = FastAPI(
 class PredictionRequest(BaseModel):
     last_prices: List[float]
 
+    # Configuração para melhorar a usabilidade no Swagger UI
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "last_prices": [
+                        12.5 + (i * 0.05) for i in range(60)
+                    ]  # Gera 60 valores de exemplo automaticamente
+                }
+            ]
+        }
+    }
+
 
 class TrainRequest(BaseModel):
-    hyperparameters: Optional[Dict[str, float]] = None
+    # Validação rigorosa de hiperparâmetros (Refinamento Pydantic)
+    hyperparameters: Optional[Dict[str, float]] = Field(
+        default=None,
+        description="Dicionário de hiperparâmetros para Tuning/Retreino",
+        examples=[
+            {
+                "learning_rate": 0.001,
+                "num_epochs": 50,
+                "hidden_size": 64,
+                "batch_size": 32,
+            }
+        ],
+    )
+
+    def validate_params(self):
+        """Validação manual adicional se necessário"""
+        if self.hyperparameters:
+            if self.hyperparameters.get("learning_rate", 1) <= 0:
+                raise ValueError("learning_rate deve ser maior que 0")
+            if self.hyperparameters.get("num_epochs", 1) < 1:
+                raise ValueError("num_epochs deve ser pelo menos 1")
 
 
 class ConfigResponse(BaseModel):
@@ -192,6 +225,43 @@ def health_check():
         return {"status": "unhealthy", "detail": str(e)}
 
 
+@app.get("/sample-data")
+def get_sample_data():
+    """
+    Retorna os últimos 60 dias de dados REAIS do dataset de teste.
+    Útil para copiar e colar no endpoint /predict para validação manual.
+    """
+    try:
+        if not os.path.exists(config.TEST_DATA_PATH) or not ml_components["scaler"]:
+            raise HTTPException(
+                status_code=404, detail="Dados de teste ou Scaler não encontrados."
+            )
+
+        # Carrega dados normalizados
+        test_data = np.load(config.TEST_DATA_PATH)
+
+        # Pega os últimos 60 pontos
+        seq_len = int(training_script.CURRENT_PARAMS["seq_length"])
+        if len(test_data) < seq_len:
+            raise HTTPException(
+                status_code=400, detail="Dados insuficientes para gerar amostra."
+            )
+
+        sample_scaled = test_data[-seq_len:]
+
+        # Desnormaliza para valores reais (R$)
+        scaler = ml_components["scaler"]
+        sample_real = scaler.inverse_transform(sample_scaled).flatten().tolist()
+
+        return {
+            "description": "Últimos 60 preços de fechamento do dataset de teste.",
+            "last_prices": [round(x, 2) for x in sample_real],
+        }
+    except Exception as e:
+        logger.error(f"Erro ao gerar sample data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/predict")
 def predict_next_day(request: PredictionRequest):
     model = ml_components["model"]
@@ -241,19 +311,59 @@ def predict_next_day(request: PredictionRequest):
         raise HTTPException(status_code=500, detail="Erro interno no servidor.")
 
 
-@app.post("/train")
+@app.post("/train", tags=["Training & Tuning"])
 def trigger_training(request: TrainRequest, background_tasks: BackgroundTasks):
+    """
+    Inicia o processo de Treinamento e Tuning de Hiperparâmetros.
+
+    Se 'hyperparameters' for fornecido, o modelo será retreinado com os novos valores.
+    Caso contrário, utiliza os parâmetros padrão.
+    """
+    # Validação lógica extra (além da tipagem)
+    try:
+        request.validate_params()
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+
     if ml_components["training_active"]:
         raise HTTPException(status_code=409, detail="Treino já está em andamento.")
 
     params = request.hyperparameters or {}
     background_tasks.add_task(background_train_task, params)
-    return {"status": "processing", "message": "Treino iniciado em background."}
+    return {"status": "processing", "message": "Treino/Tuning iniciado em background."}
 
 
 @app.get("/config", response_model=ConfigResponse)
 def get_config():
     return {"current_params": training_script.CURRENT_PARAMS}
+
+
+@app.get("/model/info")
+def get_model_info():
+    """
+    Retorna informações detalhadas sobre o modelo em produção,
+    incluindo métricas de performance (MAE, RMSE) do último treino.
+    """
+    info = {
+        "version": __version__,
+        "current_params": training_script.CURRENT_PARAMS,
+        "metrics": None,
+    }
+
+    # Tenta carregar métricas salvas pelo script de avaliação
+    if os.path.exists(config.METRICS_PATH):
+        try:
+            with open(config.METRICS_PATH, "r") as f:
+                info["metrics"] = json.load(f)
+        except Exception as e:
+            logger.warning(f"Falha ao ler métricas: {e}")
+            info["metrics_error"] = "Não foi possível ler metrics.json"
+    else:
+        info["metrics_status"] = (
+            "Métricas não disponíveis (Execute o script 04_evaluate.py)"
+        )
+
+    return info
 
 
 @app.post("/config")

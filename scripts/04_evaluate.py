@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import joblib
 import os
 import sys
+import json  # Necessário para salvar métricas para a API
 import mlflow
 import importlib  # Necessário para importar arquivos que começam com número
 from sklearn.metrics import mean_absolute_error, mean_squared_error
@@ -32,6 +33,19 @@ def calculate_mape(y_true, y_pred):
     """Calcula o Erro Percentual Absoluto Médio."""
     # Evita divisão por zero adicionando epsilon
     return np.mean(np.abs((y_true - y_pred) / (y_true + 1e-8))) * 100
+
+
+def save_metrics_for_api(metrics: dict):
+    """
+    Salva as métricas calculadas em um JSON para serem consumidas pela API.
+    Isso permite que o endpoint /model/info mostre a performance real.
+    """
+    try:
+        with open(config.METRICS_PATH, "w") as f:
+            json.dump(metrics, f, indent=4)
+        logger.info(f"Métricas salvas para a API em: {config.METRICS_PATH}")
+    except Exception as e:
+        logger.error(f"Erro ao salvar metrics.json: {e}")
 
 
 def evaluate():
@@ -100,6 +114,11 @@ def evaluate():
         mlflow.log_metric("test_mae", mae)
         mlflow.log_metric("test_rmse", rmse)
         mlflow.log_metric("test_mape", mape)
+
+        # Salva métricas localmente para a API
+        save_metrics_for_api(
+            {"mae": mae, "rmse": rmse, "mape": mape, "last_evaluation": RUN_NAME}
+        )
 
         # 6. Geração do Gráfico
         plt.figure(figsize=(12, 6))
