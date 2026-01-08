@@ -9,6 +9,7 @@ import numpy as np
 import os
 import sys
 import mlflow
+from datetime import datetime  # Necessário para gerar Run Name dinâmico
 
 # Adiciona diretório raiz ao path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -22,7 +23,6 @@ from scripts import logger
 # CONFIGURAÇÕES
 # ==========================================
 EXPERIMENT_NAME = config.EXPERIMENT_NAME
-RUN_NAME = "Treino_Lightning_Padrao"
 
 # Parâmetros Padrão
 DEFAULT_PARAMS = config.DEFAULT_HYPERPARAMS.copy()
@@ -41,6 +41,8 @@ class LSTMLightningModule(pl.LightningModule):
 
     def __init__(self, hidden_size, num_layers, learning_rate):
         super().__init__()
+        # Salva os hiperparâmetros automaticamente no MLflow/Checkpoints
+        # Isso substitui a necessidade de log manual externo
         self.save_hyperparameters()
         self.learning_rate = learning_rate
 
@@ -86,17 +88,23 @@ def train(override_params: dict = None):
     # Garante reprodutibilidade
     pl.seed_everything(config.RANDOM_SEED)
 
-    logger.info("=== Iniciando Treinamento com PyTorch Lightning + MLflow ===")
+    # Gera um nome de Run único baseado no timestamp para evitar conflitos no MLflow
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_name = f"Treino_{timestamp}"
 
-    # 1. Configuração Dinâmica de Parâmetros
-    params = CURRENT_PARAMS.copy()
+    logger.info(f"=== Iniciando Treinamento: {run_name} ===")
+
+    # 1. Atualiza a variável GLOBAL para que a API (/config) reflita a mudança
     if override_params:
-        params.update(override_params)
-        logger.info(f"Parâmetros sobrescritos para este run: {override_params}")
+        CURRENT_PARAMS.update(override_params)
+        logger.info(f"Parâmetros globais atualizados: {override_params}")
+
+    # 2. Usa os parâmetros globais atualizados para o treino local
+    params = CURRENT_PARAMS.copy()
 
     logger.info(f"Parâmetros em uso: {params}")
 
-    # 2. Carregar Dados
+    # 3. Carregar Dados
     try:
         if not os.path.exists(config.TRAIN_DATA_PATH):
             raise FileNotFoundError(
@@ -122,11 +130,14 @@ def train(override_params: dict = None):
         num_workers=0,
     )
 
-    # 3. Configurar Logger do MLflow
-    mlf_logger = MLFlowLogger(experiment_name=EXPERIMENT_NAME, run_name=RUN_NAME)
-    mlf_logger.log_hyperparams(params)
+    # 4. Configurar Logger do MLflow
+    mlf_logger = MLFlowLogger(experiment_name=EXPERIMENT_NAME, run_name=run_name)
 
-    # 4. Callbacks
+    # REMOVIDO: mlf_logger.log_hyperparams(params)
+    # Justificativa: O LSTMLightningModule já chama self.save_hyperparameters().
+    # Manter o log manual aqui causava conflito de tipos (float vs int) e erro de duplicidade no MLflow.
+
+    # 5. Callbacks
     checkpoint_callback = ModelCheckpoint(
         monitor="valid_loss",
         dirpath=config.CHECKPOINTS_DIR,
@@ -139,14 +150,15 @@ def train(override_params: dict = None):
         monitor="valid_loss", patience=10, verbose=True, mode="min"
     )
 
-    # 5. Inicializar Modelo
+    # 6. Inicializar Modelo
+    # Conversão explícita para int garante que a arquitetura receba tipos corretos
     model_system = LSTMLightningModule(
         hidden_size=int(params["hidden_size"]),
         num_layers=int(params["num_layers"]),
         learning_rate=float(params["learning_rate"]),
     )
 
-    # 6. Trainer
+    # 7. Trainer
     trainer = pl.Trainer(
         max_epochs=int(params["num_epochs"]),
         logger=mlf_logger,
@@ -156,12 +168,12 @@ def train(override_params: dict = None):
         log_every_n_steps=5,
     )
 
-    # 7. Executar Treino
+    # 8. Executar Treino
     trainer.fit(model_system, train_loader, valid_loader)
 
     logger.info(f"Melhor loss de validação: {checkpoint_callback.best_model_score}")
 
-    # 8. EXPORTAÇÃO PARA API
+    # 9. EXPORTAÇÃO PARA API
     # Carrega o melhor checkpoint
     best_model = LSTMLightningModule.load_from_checkpoint(
         checkpoint_callback.best_model_path

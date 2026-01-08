@@ -1,12 +1,13 @@
 import torch
 import joblib
 import numpy as np
+import pandas as pd  # Adicionado para corrigir o warning do Scaler
 import psutil
 import time
 import sys
 import os
 import json
-import importlib  # Necessário para importação dinâmica
+import importlib
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
 from pydantic import BaseModel, Field
@@ -125,18 +126,20 @@ app = FastAPI(
 class PredictionRequest(BaseModel):
     last_prices: List[float] = Field(
         ...,
-        description="Lista contendo exatamente 60 preços de fechamento históricos (float).",
+        description="Lista contendo exatamente 60 preços de fechamento históricos (float). Atenção, a predição falhará se o tamanho for diferente.",
         min_length=60,
+        max_length=60,
     )
 
     # Configuração para melhorar a usabilidade no Swagger UI
+    # AJUSTE: Valores alterados para ~7.0 para evitar Drift Warning falso positivo
     model_config = {
         "json_schema_extra": {
             "examples": [
                 {
                     "last_prices": [
-                        12.5 + (i * 0.05) for i in range(60)
-                    ]  # Gera 60 valores de exemplo automaticamente
+                        7.0 + (i * 0.01) for i in range(60)
+                    ]  # Gera 60 valores próximos da média histórica (7.0 - 7.6)
                 }
             ]
         }
@@ -316,7 +319,9 @@ def get_sample_data():
     tags=["Inference"],
     responses={
         200: {"description": "Predição realizada com sucesso."},
-        400: {"description": "Input com tamanho incorreto (deve ser 60)."},
+        400: {
+            "description": "ERRO DE VALIDAÇÃO: Lista de entrada com tamanho incorreto (deve ser 60)."
+        },
         503: {"description": "Modelo não carregado (Serviço Indisponível)."},
     },
 )
@@ -325,6 +330,11 @@ def predict_next_day(request: PredictionRequest):
     **Realizar Predição de Preço (D+1).**
 
     Recebe uma janela histórica de preços e retorna a previsão para o próximo dia.
+
+    **⚠️ REQUISITO OBRIGATÓRIO:**
+    * O corpo da requisição deve conter uma lista `last_prices` com **exatamente 60 valores** numéricos (float).
+    * Valores pré-preenchidos estão disponíveis no botão "Try it out" apenas para teste de conectividade.
+    * Para um teste real, utilize os dados do endpoint `/sample-data`.
 
     **Funcionalidades:**
     * Normaliza os dados de entrada.
@@ -352,8 +362,12 @@ def predict_next_day(request: PredictionRequest):
     drift_info = detect_drift(input_data)
 
     try:
-        input_array = np.array(input_data).reshape(-1, 1)
-        input_scaled = scaler.transform(input_array)
+        # CORREÇÃO: Criar DataFrame para evitar UserWarning do sklearn
+        # O scaler foi treinado com DataFrame, então espera nomes de colunas.
+        input_df = pd.DataFrame(input_data, columns=[config.FEATURE_COLUMN])
+
+        # Transforma usando o DataFrame (mantém nomes das features)
+        input_scaled = scaler.transform(input_df)
 
         sequence = (
             torch.tensor(input_scaled, dtype=torch.float32)

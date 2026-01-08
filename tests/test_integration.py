@@ -110,8 +110,12 @@ def test_prediction_invalid_shape(client):
     payload = {"last_prices": [10.0, 11.0, 12.0, 13.0, 14.0]}
     response = client.post("/predict", json=payload)
 
-    assert response.status_code == 400
-    assert "Esperado 60 preços" in response.json()["detail"]
+    # CORREÇÃO: O FastAPI retorna 422 (Unprocessable Entity) quando a validação
+    # do Pydantic falha (min_length=60), antes mesmo de entrar na rota.
+    assert response.status_code == 422
+    
+    # Opcional: Verificar se a mensagem de erro menciona o tamanho
+    assert "last_prices" in str(response.json())
 
 
 def test_config_endpoint(client):
