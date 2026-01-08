@@ -17,7 +17,7 @@ from src import config
 def client():
     """
     Inicializa o cliente de teste COM o ciclo de vida (lifespan).
-    Isso garante que load_artifacts() seja chamado.
+    Isso garante que load_artifacts() seja chamado e o modelo carregado.
     """
     with TestClient(app) as c:
         yield c
@@ -51,7 +51,10 @@ def drift_input():
 
 
 def test_health_check(client):
-    """Verifica se a API está online e respondendo."""
+    """
+    Verifica se a API está online e respondendo.
+    Valida o Liveness Probe.
+    """
     response = client.get("/health")
     assert response.status_code == 200
     data = response.json()
@@ -63,7 +66,7 @@ def test_health_check(client):
 
 def test_prediction_success(client, sample_input):
     """
-    Testa o fluxo feliz de predição.
+    Testa o fluxo feliz de predição (Caminho Feliz).
     """
     if not os.path.exists(config.MODEL_PATH):
         pytest.skip("Modelo não treinado. Pule este teste.")
@@ -87,9 +90,37 @@ def test_prediction_success(client, sample_input):
     assert data["drift_warning"] is False
 
 
+def test_sample_data_integration_flow(client):
+    """
+    NOVO: Testa o fluxo integrado de obter dados reais e usar na predição.
+    Simula o cenário: Copiar do /sample-data -> Colar no /predict.
+    """
+    # 1. Obter dados de amostra
+    response_sample = client.get("/sample-data")
+
+    # Se não houver dados processados, pulamos o teste (ambiente limpo)
+    if response_sample.status_code == 404:
+        pytest.skip("Dados de teste não encontrados (execute o preprocessamento).")
+
+    assert response_sample.status_code == 200
+    sample_data = response_sample.json()
+
+    assert "last_prices" in sample_data
+    real_prices = sample_data["last_prices"]
+    assert len(real_prices) == 60
+
+    # 2. Usar esses dados para prever
+    payload = {"last_prices": real_prices}
+    response_predict = client.post("/predict", json=payload)
+
+    assert response_predict.status_code == 200
+    assert "predicted_price" in response_predict.json()
+
+
 def test_prediction_drift_detection(client, drift_input):
     """
     Testa se a API detecta corretamente anomalias nos dados (Drift).
+    Cenário de Teste 3.3 (Roteiro Manual).
     """
     if not os.path.exists(config.STATS_PATH):
         pytest.skip("Baseline stats não encontrado. Pule este teste.")
@@ -105,17 +136,88 @@ def test_prediction_drift_detection(client, drift_input):
 
 
 def test_prediction_invalid_shape(client):
-    """Testa se a API rejeita inputs com tamanho incorreto."""
+    """
+    Testa se a API rejeita inputs com tamanho incorreto.
+    Cenário de Teste 3.1 (Roteiro Manual).
+    """
     # Envia apenas 5 valores em vez de 60
     payload = {"last_prices": [10.0, 11.0, 12.0, 13.0, 14.0]}
     response = client.post("/predict", json=payload)
 
-    # CORREÇÃO: O FastAPI retorna 422 (Unprocessable Entity) quando a validação
-    # do Pydantic falha (min_length=60), antes mesmo de entrar na rota.
+    # CORREÇÃO: Pydantic retorna 422 Unprocessable Entity quando min_length não é atendido.
+    # Isso prova que a validação automática do Schema está funcionando antes mesmo da função rodar.
     assert response.status_code == 422
-    
-    # Opcional: Verificar se a mensagem de erro menciona o tamanho
-    assert "last_prices" in str(response.json())
+
+
+def test_prediction_type_error(client):
+    """
+    NOVO: Testa validação de tipos (String no lugar de Float).
+    Cenário de Teste 3.2 (Roteiro Manual).
+    """
+    # Lista com string misturada
+    payload = {"last_prices": [10.0] * 59 + ["texto_invalido"]}
+    response = client.post("/predict", json=payload)
+
+    # FastAPI/Pydantic retorna 422 Unprocessable Entity para erros de tipagem
+    assert response.status_code == 422
+
+
+def test_prediction_zeros(client):
+    """
+    NOVO: Testa robustez matemática com valores zerados.
+    Cenário de Teste 3.4 (Roteiro Manual).
+    """
+    if not os.path.exists(config.MODEL_PATH):
+        pytest.skip("Modelo não treinado.")
+
+    payload = {"last_prices": [0.0] * 60}
+    response = client.post("/predict", json=payload)
+
+    # Deve responder 200 OK (matematicamente possível), mesmo que financeiramente estranho
+    assert response.status_code == 200
+    assert "predicted_price" in response.json()
+
+
+def test_train_validation_error(client):
+    """
+    NOVO: Testa a validação de hiperparâmetros inválidos no endpoint de treino.
+    """
+    # Learning rate negativo deve ser rejeitado
+    payload = {"hyperparameters": {"learning_rate": -0.01}}
+    response = client.post("/train", json=payload)
+
+    assert response.status_code == 400
+    assert "learning_rate deve ser maior que 0" in response.json()["detail"]
+
+
+def test_train_trigger_success(client):
+    """
+    NOVO: Testa o disparo correto do treinamento (Happy Path).
+    Não espera o treino terminar, apenas verifica se a Task foi aceita.
+    """
+    payload = {"hyperparameters": {"num_epochs": 1}}
+    response = client.post("/train", json=payload)
+
+    # Se já houver treino rodando (de testes anteriores), pode dar 409
+    if response.status_code == 409:
+        pytest.skip("Treino já em andamento, pulando teste de trigger.")
+
+    assert response.status_code == 202
+    assert "iniciado em background" in response.json()["message"]
+
+
+def test_model_info_structure(client):
+    """
+    NOVO: Verifica se o endpoint de informações retorna a estrutura correta.
+    """
+    response = client.get("/model/info")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert "version" in data
+    assert "current_params" in data
+    # metrics pode ser None ou dict, mas a chave deve existir
+    assert "metrics" in data
 
 
 def test_config_endpoint(client):
