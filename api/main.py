@@ -20,8 +20,26 @@ from src.model import LSTMModel
 from src import config
 from api import logger, __app__, __version__
 
-# --- Importação Dinâmica do Script de Treino ---
-training_script = importlib.import_module("scripts.03_train")
+# --- Importação Dinâmica e Segura do Script de Treino ---
+try:
+    training_script = importlib.import_module("scripts.03_train")
+except ImportError as e:
+    logger.critical(
+        f"ERRO CRÍTICO: Não foi possível importar o script de treino. Detalhes: {e}"
+    )
+
+    # Cria um mock para não quebrar a API inteira, mas funcionalidades de treino falharão
+    class MockScript:
+        CURRENT_PARAMS = config.DEFAULT_HYPERPARAMS
+
+        def train(self, *args, **kwargs):
+            raise NotImplementedError("Script de treino indisponível.")
+
+    training_script = MockScript()
+
+# --- Constantes Dinâmicas ---
+# Garante que a validação da API esteja sempre sincronizada com o Config
+SEQ_LEN = int(config.DEFAULT_HYPERPARAMS["seq_length"])
 
 # --- Variáveis Globais de Estado ---
 ml_components = {
@@ -123,17 +141,17 @@ app = FastAPI(
     title=__app__,
     description="""
     # 📈 API de Previsão de Ações (LSTM) - Tech Challenge
-    
+
     Bem-vindo à documentação interativa da API de previsão financeira. Este projeto utiliza Deep Learning (LSTM) para prever o fechamento de ações da **CEMIG (CMIG4)**.
-    
+
     ## 🌟 Visão Geral das Funcionalidades
-    
-    *   **Predição Inteligente:** Estima o preço de amanhã (D+1) baseando-se nos últimos 60 dias.
+
+    *   **Predição Inteligente:** Estima o preço de amanhã (D+1) baseando-se nos últimos dias (Janela Deslizante).
     *   **Segurança de Dados (Drift):** O sistema avisa se os dados enviados fugirem do padrão normal de mercado.
     *   **MLOps Automatizado:** Permite retreinar o modelo em background sem parar a API.
-    
+
     ## 📚 Como usar esta documentação
-    
+
     1.  Comece pelo endpoint **`/sample-data`** para pegar dados reais.
     2.  Use esses dados no endpoint **`/predict`** para ver o modelo em ação.
     3.  Explore **`/model/info`** para ver a performance técnica (Erro Médio, etc).
@@ -149,81 +167,16 @@ class PredictionRequest(BaseModel):
     last_prices: List[float] = Field(
         ...,
         description=(
-            "Lista contendo **EXATAMENTE 60 preços** de fechamento históricos (float). "
-            "Este tamanho é fixo pois a Rede Neural foi treinada com uma janela temporal de 60 dias."
+            f"Lista contendo **EXATAMENTE {SEQ_LEN} preços** de fechamento históricos (float). "
+            "Este tamanho é definido dinamicamente pela configuração do projeto (`src/config.py`)."
         ),
-        min_length=60,
-        max_length=60,
+        min_length=SEQ_LEN,
+        max_length=SEQ_LEN,
     )
 
     model_config = {
         "json_schema_extra": {
-            "examples": [
-                {
-                    "last_prices": [
-                        10.5,
-                        10.6,
-                        10.4,
-                        10.8,
-                        10.9,
-                        11.0,
-                        10.9,
-                        10.8,
-                        10.7,
-                        10.6,
-                        10.5,
-                        10.4,
-                        10.3,
-                        10.2,
-                        10.1,
-                        10.0,
-                        9.9,
-                        9.8,
-                        9.9,
-                        10.0,
-                        10.1,
-                        10.2,
-                        10.3,
-                        10.4,
-                        10.5,
-                        10.6,
-                        10.7,
-                        10.8,
-                        10.9,
-                        11.0,
-                        11.1,
-                        11.2,
-                        11.3,
-                        11.4,
-                        11.5,
-                        11.6,
-                        11.7,
-                        11.8,
-                        11.9,
-                        12.0,
-                        12.1,
-                        12.2,
-                        12.3,
-                        12.4,
-                        12.5,
-                        12.6,
-                        12.7,
-                        12.8,
-                        12.9,
-                        13.0,
-                        13.1,
-                        13.2,
-                        13.3,
-                        13.4,
-                        13.5,
-                        13.6,
-                        13.7,
-                        13.8,
-                        13.9,
-                        14.0,
-                    ]
-                }
-            ]
+            "examples": [{"last_prices": [10.0 + (i * 0.1) for i in range(SEQ_LEN)]}]
         }
     }
 
@@ -380,13 +333,13 @@ def get_sample_data():
     """
     **Gerador de Dados de Exemplo.**
 
-    Recupera os últimos 60 dias de preços reais do dataset de teste.
+    Recupera os últimos dias de preços reais do dataset de teste, conforme o tamanho da janela configurada.
 
     **Objetivo:**
     Facilitar o teste manual do endpoint `/predict`. Você pode copiar o JSON retornado aqui e colar diretamente no corpo da requisição de predição.
 
     **Retorno:**
-    *   `last_prices`: Lista com 60 floats representando preços reais de fechamento.
+    *   `last_prices`: Lista com preços reais de fechamento.
     """
     try:
         if not os.path.exists(config.TEST_DATA_PATH) or not ml_components["scaler"]:
@@ -395,19 +348,18 @@ def get_sample_data():
             )
 
         test_data = np.load(config.TEST_DATA_PATH)
-        seq_len = int(training_script.CURRENT_PARAMS["seq_length"])
-
-        if len(test_data) < seq_len:
+        # Usa a constante dinâmica SEQ_LEN
+        if len(test_data) < SEQ_LEN:
             raise HTTPException(
                 status_code=400, detail="Dados insuficientes para gerar amostra."
             )
 
-        sample_scaled = test_data[-seq_len:]
+        sample_scaled = test_data[-SEQ_LEN:]
         scaler = ml_components["scaler"]
         sample_real = scaler.inverse_transform(sample_scaled).flatten().tolist()
 
         return {
-            "description": "Últimos 60 preços de fechamento do dataset de teste.",
+            "description": f"Últimos {SEQ_LEN} preços de fechamento do dataset de teste.",
             "last_prices": [round(x, 2) for x in sample_real],
         }
     except Exception as e:
@@ -434,7 +386,7 @@ def get_sample_data():
             },
         },
         400: {
-            "description": "Erro de Validação. A lista não possui exatamente 60 itens."
+            "description": f"Erro de Validação. A lista não possui exatamente {SEQ_LEN} itens."
         },
         503: {"description": "Serviço Indisponível. O modelo não foi carregado."},
     },
@@ -446,7 +398,7 @@ def predict_next_day(request: PredictionRequest):
     Este é o endpoint principal da aplicação. Ele recebe uma janela histórica de preços e utiliza a rede neural LSTM para prever o fechamento do dia seguinte.
 
     **Regras de Negócio e Fluxo:**
-    1.  **Validação de Entrada:** O sistema exige estritamente **60 valores** (dias). Menos que isso impede a formação da matriz de entrada da rede neural.
+    1.  **Validação de Entrada:** O sistema exige estritamente **{SEQ_LEN} valores** (dias). Menos que isso impede a formação da matriz de entrada da rede neural.
     2.  **Detecção de Data Drift:** Antes de prever, o sistema compara estatisticamente os dados enviados com os dados usados no treinamento.
         *   Se a volatilidade for muito alta ou os valores fugirem do padrão (Min/Max), um alerta (`drift_warning: true`) é retornado.
     3.  **Normalização:** Os dados são convertidos para a escala 0-1 (usando o `MinMaxScaler` salvo).
@@ -454,7 +406,7 @@ def predict_next_day(request: PredictionRequest):
     5.  **Desnormalização:** O resultado é convertido de volta para Reais (R$).
 
     **Parâmetros de Entrada:**
-    *   `last_prices`: Lista de 60 floats (Preços de fechamento).
+    *   `last_prices`: Lista de floats (Preços de fechamento).
     """
     model = ml_components["model"]
     scaler = ml_components["scaler"]
@@ -466,12 +418,12 @@ def predict_next_day(request: PredictionRequest):
         )
 
     input_data = request.last_prices
-    expected_length = int(training_script.CURRENT_PARAMS["seq_length"])
 
-    if len(input_data) != expected_length:
+    # Validação redundante (além do Pydantic) para garantir integridade lógica
+    if len(input_data) != SEQ_LEN:
         raise HTTPException(
             status_code=400,
-            detail=f"Esperado {expected_length} preços. Recebido: {len(input_data)}.",
+            detail=f"Esperado {SEQ_LEN} preços. Recebido: {len(input_data)}.",
         )
 
     drift_info = detect_drift(input_data)
