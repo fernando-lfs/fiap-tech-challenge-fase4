@@ -137,25 +137,28 @@ async def lifespan(app: FastAPI):
     logger.info("Desligando API e liberando recursos...")
 
 
+# --- Descrição Dinâmica da API ---
+api_description = f"""
+# 📈 API de Previsão de Ações (LSTM) - Tech Challenge
+
+Bem-vindo à documentação interativa da API de previsão financeira. Este projeto utiliza Deep Learning (LSTM) para prever o fechamento de ações da **CEMIG (CMIG4)**.
+
+## 🌟 Visão Geral das Funcionalidades
+
+*   **Predição Inteligente:** Estima o preço de amanhã (D+1) baseando-se nos últimos **{SEQ_LEN} dias** (Janela Deslizante).
+*   **Segurança de Dados (Drift):** O sistema avisa se os dados enviados fugirem do padrão normal de mercado.
+*   **MLOps Automatizado:** Permite retreinar o modelo em background sem parar a API.
+
+## 📚 Como usar esta documentação
+
+1.  Comece pelo endpoint **`/sample-data`** para pegar dados reais.
+2.  Use esses dados no endpoint **`/predict`** para ver o modelo em ação.
+3.  Explore **`/model/info`** para ver a performance técnica (Erro Médio, etc).
+"""
+
 app = FastAPI(
     title=__app__,
-    description="""
-    # 📈 API de Previsão de Ações (LSTM) - Tech Challenge
-
-    Bem-vindo à documentação interativa da API de previsão financeira. Este projeto utiliza Deep Learning (LSTM) para prever o fechamento de ações da **CEMIG (CMIG4)**.
-
-    ## 🌟 Visão Geral das Funcionalidades
-
-    *   **Predição Inteligente:** Estima o preço de amanhã (D+1) baseando-se nos últimos dias (Janela Deslizante).
-    *   **Segurança de Dados (Drift):** O sistema avisa se os dados enviados fugirem do padrão normal de mercado.
-    *   **MLOps Automatizado:** Permite retreinar o modelo em background sem parar a API.
-
-    ## 📚 Como usar esta documentação
-
-    1.  Comece pelo endpoint **`/sample-data`** para pegar dados reais.
-    2.  Use esses dados no endpoint **`/predict`** para ver o modelo em ação.
-    3.  Explore **`/model/info`** para ver a performance técnica (Erro Médio, etc).
-    """,
+    description=api_description,
     version=__version__,
     openapi_tags=tags_metadata,
     lifespan=lifespan,
@@ -328,19 +331,28 @@ def health_check():
         return {"status": "unhealthy", "detail": str(e)}
 
 
-@app.get("/sample-data", tags=["1. Inference"], summary="Obter dados reais para teste")
+# --- Descrições Dinâmicas para Endpoints ---
+
+sample_data_description = f"""
+**Gerador de Dados de Exemplo.**
+
+Recupera os últimos **{SEQ_LEN} dias** de preços reais do dataset de teste, conforme o tamanho da janela configurada.
+
+**Objetivo:**
+Facilitar o teste manual do endpoint `/predict`. Você pode copiar o JSON retornado aqui e colar diretamente no corpo da requisição de predição.
+
+**Retorno:**
+*   `last_prices`: Lista com preços reais de fechamento.
+"""
+
+
+@app.get(
+    "/sample-data",
+    tags=["1. Inference"],
+    summary="Obter dados reais para teste",
+    description=sample_data_description,  # CORREÇÃO: Passando a descrição via parâmetro
+)
 def get_sample_data():
-    """
-    **Gerador de Dados de Exemplo.**
-
-    Recupera os últimos dias de preços reais do dataset de teste, conforme o tamanho da janela configurada.
-
-    **Objetivo:**
-    Facilitar o teste manual do endpoint `/predict`. Você pode copiar o JSON retornado aqui e colar diretamente no corpo da requisição de predição.
-
-    **Retorno:**
-    *   `last_prices`: Lista com preços reais de fechamento.
-    """
     try:
         if not os.path.exists(config.TEST_DATA_PATH) or not ml_components["scaler"]:
             raise HTTPException(
@@ -367,10 +379,29 @@ def get_sample_data():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+predict_description = f"""
+**Realizar Inferência (Predição).**
+
+Este é o endpoint principal da aplicação. Ele recebe uma janela histórica de preços e utiliza a rede neural LSTM para prever o fechamento do dia seguinte.
+
+**Regras de Negócio e Fluxo:**
+1.  **Validação de Entrada:** O sistema exige estritamente **{SEQ_LEN} valores** (dias). Menos que isso impede a formação da matriz de entrada da rede neural.
+2.  **Detecção de Data Drift:** Antes de prever, o sistema compara estatisticamente os dados enviados com os dados usados no treinamento.
+    *   Se a volatilidade for muito alta ou os valores fugirem do padrão (Min/Max), um alerta (`drift_warning: true`) é retornado.
+3.  **Normalização:** Os dados são convertidos para a escala 0-1 (usando o `MinMaxScaler` salvo).
+4.  **Inferência:** O modelo LSTM processa a sequência.
+5.  **Desnormalização:** O resultado é convertido de volta para Reais (R$).
+
+**Parâmetros de Entrada:**
+*   `last_prices`: Lista de floats (Preços de fechamento).
+"""
+
+
 @app.post(
     "/predict",
     tags=["1. Inference"],
     summary="Prever preço da ação (D+1)",
+    description=predict_description,  # CORREÇÃO: Passando a descrição via parâmetro
     response_description="Preço previsto e análise de anomalias.",
     responses={
         200: {
@@ -392,22 +423,6 @@ def get_sample_data():
     },
 )
 def predict_next_day(request: PredictionRequest):
-    """
-    **Realizar Inferência (Predição).**
-
-    Este é o endpoint principal da aplicação. Ele recebe uma janela histórica de preços e utiliza a rede neural LSTM para prever o fechamento do dia seguinte.
-
-    **Regras de Negócio e Fluxo:**
-    1.  **Validação de Entrada:** O sistema exige estritamente **{SEQ_LEN} valores** (dias). Menos que isso impede a formação da matriz de entrada da rede neural.
-    2.  **Detecção de Data Drift:** Antes de prever, o sistema compara estatisticamente os dados enviados com os dados usados no treinamento.
-        *   Se a volatilidade for muito alta ou os valores fugirem do padrão (Min/Max), um alerta (`drift_warning: true`) é retornado.
-    3.  **Normalização:** Os dados são convertidos para a escala 0-1 (usando o `MinMaxScaler` salvo).
-    4.  **Inferência:** O modelo LSTM processa a sequência.
-    5.  **Desnormalização:** O resultado é convertido de volta para Reais (R$).
-
-    **Parâmetros de Entrada:**
-    *   `last_prices`: Lista de floats (Preços de fechamento).
-    """
     model = ml_components["model"]
     scaler = ml_components["scaler"]
 

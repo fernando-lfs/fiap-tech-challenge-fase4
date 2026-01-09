@@ -14,16 +14,16 @@ from scripts import logger
 
 def download_stock_data(symbol: str, start: str, end: str, output_path: str):
     """
-    Baixa os dados históricos de uma ação usando o yfinance e salva em um arquivo CSV.
+    Baixa os dados históricos de uma ação e salva em CSV.
 
     Args:
-        symbol (str): O ticker da ação.
+        symbol (str): O ticker da ação (ex: 'CMIG4.SA').
         start (str): Data de início (YYYY-MM-DD).
         end (str): Data de fim (YYYY-MM-DD).
-        output_path (str): Caminho completo para salvar o .csv.
+        output_path (str): Caminho completo para salvar o arquivo bruto.
     """
-    logger.info(f"Iniciando download dos dados para {symbol}...")
-    logger.info(f"Período: {start} até {end}")
+    logger.info(f"Iniciando download via Yahoo Finance: {symbol}")
+    logger.info(f"Janela Temporal: {start} -> {end}")
 
     try:
         # 1. Cria o objeto Ticker
@@ -34,39 +34,37 @@ def download_stock_data(symbol: str, start: str, end: str, output_path: str):
 
         if df.empty:
             logger.error(
-                f"Nenhum dado encontrado para {symbol}. Verifique o ticker ou as datas."
+                f"Nenhum dado retornado para {symbol}. Verifique conexão ou ticker."
             )
             return
 
-        # 3. Transforma o índice (Date) em uma coluna regular 'Date'
+        # 3. Reset do índice para transformar 'Date' em coluna
         df.reset_index(inplace=True)
 
-        # 4. Formata a data (remove fuso horário se houver)
+        # 4. Padronização de datas (remove timezone awareness se existir)
         df["Date"] = pd.to_datetime(df["Date"]).dt.date
 
-        # 5. Remove colunas que não usaremos (ex: 'Dividends')
+        # 5. Seleção de colunas relevantes
         cols_to_keep = ["Date", "Open", "High", "Low", "Close", "Volume"]
-
-        # Filtra o DataFrame para manter apenas as colunas existentes na lista
         df_cleaned = df[[col for col in cols_to_keep if col in df.columns]]
 
-        # Garantir que o diretório de saída exista (Usa caminho do config)
+        # Garantia de existência do diretório pai
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-        # 6. Salvar o CSV limpo (sem índice do pandas)
+        # 6. Persistência
         df_cleaned.to_csv(output_path, index=False)
 
-        logger.info(f"Dados salvos com sucesso em: {output_path}")
-        logger.info(f"Total de {len(df_cleaned)} registros baixados.")
+        logger.info(f"Download concluído. Registros: {len(df_cleaned)}")
+        logger.info(f"Arquivo salvo em: {os.path.abspath(output_path)}")
 
     except Exception as e:
-        logger.error(f"Erro crítico ao baixar os dados: {e}")
+        logger.error(f"Falha crítica no download: {e}")
 
 
 # --- Execução do Script ---
 
 if __name__ == "__main__":
-    # Utiliza constantes centralizadas no src/config.py
+    # Executa utilizando as configurações centralizadas
     download_stock_data(
         symbol=config.SYMBOL,
         start=config.DATE_START,

@@ -1,3 +1,4 @@
+
 # 📈 Tech Challenge - Fase 4: Previsão de Ações com MLOps
 
 ![Python](https://img.shields.io/badge/Python-3.11-blue?style=for-the-badge&logo=python)
@@ -5,6 +6,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.109-009688?style=for-the-badge&logo=fastapi)
 ![Docker](https://img.shields.io/badge/Docker-Container-2496ed?style=for-the-badge&logo=docker)
 ![MLflow](https://img.shields.io/badge/MLflow-Tracking-blue?style=for-the-badge&logo=mlflow)
+![Pytest](https://img.shields.io/badge/Pytest-Testing-yellow?style=for-the-badge&logo=pytest)
 
 > **Pós-Graduação em Deep Learning & AI - FIAP**
 
@@ -20,7 +22,10 @@ A arquitetura abrange desde a engenharia de dados até o deploy produtivo, utili
 *   **Deep Learning Moderno:** Uso de **PyTorch Lightning** para estruturar o código de treino e garantir reprodutibilidade.
 *   **API Inteligente (Drift Detection):** O endpoint de predição monitora estatisticamente a entrada. Se os dados desviarem do padrão de treino (ex: alta volatilidade), um alerta é retornado no JSON de resposta.
 *   **Treino Assíncrono:** Capacidade de retreinar o modelo em background (`BackgroundTasks`) sem bloquear a API.
-*   **Qualidade de Software:** Testes de integração (`pytest`) e tipagem estática rigorosa.
+*   **MLOps & Tracking:** Integração nativa com **MLflow** para registrar métricas detalhadas (**MAE, RMSE, MAPE**), hiperparâmetros e artefatos do modelo.
+*   **Qualidade de Software:** Suíte robusta de **testes de integração** (`pytest`) que valida a API, o carregamento de artefatos e a lógica de detecção de anomalias antes do deploy.
+*   **Containerização Segura:** Dockerfile otimizado rodando com **usuário não-root** (appuser) para mitigar riscos de segurança em produção.
+*   **Documentação Interativa:** O Swagger UI vem pré-configurado com exemplos de dados e endpoints auxiliares para facilitar o teste manual.
 
 ---
 
@@ -31,12 +36,17 @@ A arquitetura abrange desde a engenharia de dados até o deploy produtivo, utili
 | **Framework DL** | **PyTorch + Lightning** | Flexibilidade dinâmica e remoção de *boilerplate* (loops manuais), facilitando a manutenção e uso de callbacks. |
 | **Tracking** | **MLflow** | Padrão de mercado para rastreabilidade de experimentos (métricas e parâmetros). |
 | **API** | **FastAPI** | Alta performance (ASGI), validação automática com Pydantic e suporte nativo a processamento assíncrono. |
+| **Testes** | **Pytest + TestClient** | Padrão da indústria. O TestClient permite simular requisições à API sem necessidade de subir o servidor, validando o ciclo de vida (`lifespan`) da aplicação. |
 | **Drift Detection** | **Estatística (In-App)** | Implementação leve baseada em estatísticas descritivas (Baseline JSON). Evita a complexidade de ferramentas externas pesadas para este escopo. |
 | **Configuração** | **Single Source of Truth** | Uso de `src/config.py` centralizado para evitar "números mágicos" e inconsistências de caminhos. |
 
 ---
 
 ## ⚡ Guia de Instalação e Execução
+
+### Pré-requisitos
+*   **Docker** (Recomendado para execução isolada e avaliação).
+*   **Python 3.11+** e **Poetry** (Para desenvolvimento local).
 
 ### 1. Clonar o Repositório
 O primeiro passo é obter o código-fonte em sua máquina local.
@@ -65,8 +75,6 @@ docker run -d -p 8000:8000 --name api-lstm lstm-mlops
 
 #### Opção B: Execução Local (Desenvolvimento)
 Recomendado se você deseja rodar o pipeline de treinamento passo a passo.
-
-**Pré-requisitos:** Python 3.11+ e Poetry (opcional).
 
 **Passo 1: Instalar Dependências**
 ```bash
@@ -203,9 +211,9 @@ O modelo atual (LSTM 2-Layers, Hidden=64) apresentou nos dados de teste:
 
 | Métrica | Valor | Descrição |
 | :--- | :--- | :--- |
-| **MAPE** | **1.94%** | Erro percentual médio absoluto. |
-| **RMSE** | **0.25** | Raiz do erro quadrático médio (na escala real em R$). |
-| **MAE**  | **0.20** | Erro absoluto médio (na escala real em R$). |
+| **MAPE** | **2.24%** | Erro percentual médio absoluto. |
+| **RMSE** | **0.28** | Raiz do erro quadrático médio (na escala real em R$). |
+| **MAE**  | **0.23** | Erro absoluto médio (na escala real em R$). |
 
 ---
 
