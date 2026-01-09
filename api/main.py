@@ -9,9 +9,9 @@ import os
 import json
 import importlib
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Request, BackgroundTasks, status
 from pydantic import BaseModel, Field
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 
 # Adiciona raiz ao path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -34,27 +34,23 @@ ml_components = {
 # --- Metadados para Documentação (Tags) ---
 tags_metadata = [
     {
-        "name": "Inference",
-        "description": "Endpoints para predição de preços e geração de dados de exemplo.",
+        "name": "1. Inference",
+        "description": "Endpoints principais para consumo do modelo (Predição) e geração de dados de teste.",
     },
     {
-        "name": "Training & Tuning",
-        "description": "Funcionalidades de retreino do modelo e ajuste de hiperparâmetros.",
+        "name": "2. MLOps & Training",
+        "description": "Funcionalidades para ciclo de vida do modelo: Retreino, Tuning e Atualização de Artefatos.",
     },
     {
-        "name": "Monitoring",
-        "description": "Health checks, métricas de performance e informações do sistema.",
-    },
-    {
-        "name": "Management",
-        "description": "Gerenciamento de configurações e recarga de artefatos (Hot Reload).",
+        "name": "3. Observability",
+        "description": "Monitoramento de saúde da aplicação, métricas de performance e status do sistema.",
     },
 ]
 
 
 # --- Lógica de Carregamento (Lifespan) ---
 def load_artifacts():
-    """Carrega os artefatos de ML na memória."""
+    """Carrega os artefatos de ML (Modelo, Scaler, Stats) do disco para a memória."""
     try:
         # 1. Carregar Scaler
         if os.path.exists(config.SCALER_PATH):
@@ -65,28 +61,24 @@ def load_artifacts():
         if os.path.exists(config.STATS_PATH):
             with open(config.STATS_PATH, "r") as f:
                 ml_components["baseline_stats"] = json.load(f)
-            logger.info("Baseline estatístico carregado.")
+            logger.info("Baseline estatístico carregado para detecção de Drift.")
         else:
             logger.warning(
-                "Baseline stats não encontrado. Monitoramento de Drift inativo."
+                "Baseline stats não encontrado. Monitoramento de Drift estará INATIVO."
             )
 
         # 3. Carregar Modelo
         if os.path.exists(config.MODEL_PATH):
-            # --- CORREÇÃO: Carregar Configuração Persistida ---
-            # Antes de instanciar o modelo, verificamos se existe um arquivo de config
-            # que diz qual foi a arquitetura (hidden_size) usada no treino salvo.
+            # Verifica configuração persistida para instanciar a arquitetura correta
             if os.path.exists(config.MODEL_CONFIG_PATH):
                 try:
                     with open(config.MODEL_CONFIG_PATH, "r") as f:
                         saved_params = json.load(f)
-                    # Atualiza os parâmetros globais com o que estava salvo no disco
                     training_script.CURRENT_PARAMS.update(saved_params)
                     logger.info(f"Configuração do modelo restaurada: {saved_params}")
                 except Exception as e:
                     logger.error(f"Erro ao ler config do modelo: {e}. Usando padrões.")
 
-            # Agora usamos os parâmetros corretos (restaurados ou padrão)
             params = training_script.CURRENT_PARAMS
 
             model = LSTMModel(
@@ -94,16 +86,22 @@ def load_artifacts():
                 hidden_size=int(params["hidden_size"]),
                 num_layers=int(params["num_layers"]),
             )
-            # Usa config.DEVICE para consistência
+
+            # Carrega pesos e move para o dispositivo configurado
             model.load_state_dict(
                 torch.load(config.MODEL_PATH, map_location=config.DEVICE)
             )
             model.to(config.DEVICE)
-            model.eval()
+            model.eval()  # Modo de avaliação (desativa Dropout, etc.)
+
             ml_components["model"] = model
-            logger.info("Modelo LSTM carregado com sucesso.")
+            logger.info(
+                f"Modelo LSTM carregado com sucesso no dispositivo: {config.DEVICE}"
+            )
         else:
-            logger.warning("Arquivo de modelo não encontrado. API em modo degradado.")
+            logger.warning(
+                "Arquivo de modelo (.pth) não encontrado. API em modo degradado."
+            )
 
     except Exception as e:
         logger.error(f"Erro crítico no carregamento de artefatos: {e}")
@@ -111,25 +109,34 @@ def load_artifacts():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Executado na inicialização
-    logger.info("Inicializando componentes de ML...")
+    """
+    Gerenciador de Ciclo de Vida da Aplicação.
+    Executa a carga de modelos na inicialização e limpeza no desligamento.
+    """
+    logger.info(f"Inicializando componentes de ML em {config.DEVICE}...")
     load_artifacts()
     yield
-    # Executado no desligamento (limpeza se necessário)
-    logger.info("Desligando API...")
+    logger.info("Desligando API e liberando recursos...")
 
 
 app = FastAPI(
     title=__app__,
     description="""
-    ## 🚀 API de Previsão de Ações (LSTM) - Tech Challenge
+    # 📈 API de Previsão de Ações (LSTM) - Tech Challenge
     
-    Esta API fornece serviços de Machine Learning para previsão de preços de fechamento de ações (CMIG4).
+    Bem-vindo à documentação interativa da API de previsão financeira. Este projeto utiliza Deep Learning (LSTM) para prever o fechamento de ações da **CEMIG (CMIG4)**.
     
-    ### Funcionalidades Principais:
-    * **Predição:** Estima o preço do dia seguinte (D+1) com base em uma janela histórica.
-    * **Monitoramento:** Detecta *Data Drift* (mudanças no padrão dos dados) em tempo real.
-    * **MLOps:** Permite retreino e tuning de hiperparâmetros em background.
+    ## 🌟 Visão Geral das Funcionalidades
+    
+    *   **Predição Inteligente:** Estima o preço de amanhã (D+1) baseando-se nos últimos 60 dias.
+    *   **Segurança de Dados (Drift):** O sistema avisa se os dados enviados fugirem do padrão normal de mercado.
+    *   **MLOps Automatizado:** Permite retreinar o modelo em background sem parar a API.
+    
+    ## 📚 Como usar esta documentação
+    
+    1.  Comece pelo endpoint **`/sample-data`** para pegar dados reais.
+    2.  Use esses dados no endpoint **`/predict`** para ver o modelo em ação.
+    3.  Explore **`/model/info`** para ver a performance técnica (Erro Médio, etc).
     """,
     version=__version__,
     openapi_tags=tags_metadata,
@@ -142,22 +149,79 @@ class PredictionRequest(BaseModel):
     last_prices: List[float] = Field(
         ...,
         description=(
-            "Lista contendo EXATAMENTE 60 preços de fechamento históricos. "
-            "Este valor é mandatório pois corresponde ao hiperparâmetro 'seq_length' "
-            "definido na arquitetura da rede neural LSTM durante o treinamento."
+            "Lista contendo **EXATAMENTE 60 preços** de fechamento históricos (float). "
+            "Este tamanho é fixo pois a Rede Neural foi treinada com uma janela temporal de 60 dias."
         ),
         min_length=60,
         max_length=60,
     )
 
-    # Configuração para melhorar a usabilidade no Swagger UI
     model_config = {
         "json_schema_extra": {
             "examples": [
                 {
                     "last_prices": [
-                        7.0 + (i * 0.01) for i in range(60)
-                    ]  # Gera 60 valores próximos da média histórica (7.0 - 7.6)
+                        10.5,
+                        10.6,
+                        10.4,
+                        10.8,
+                        10.9,
+                        11.0,
+                        10.9,
+                        10.8,
+                        10.7,
+                        10.6,
+                        10.5,
+                        10.4,
+                        10.3,
+                        10.2,
+                        10.1,
+                        10.0,
+                        9.9,
+                        9.8,
+                        9.9,
+                        10.0,
+                        10.1,
+                        10.2,
+                        10.3,
+                        10.4,
+                        10.5,
+                        10.6,
+                        10.7,
+                        10.8,
+                        10.9,
+                        11.0,
+                        11.1,
+                        11.2,
+                        11.3,
+                        11.4,
+                        11.5,
+                        11.6,
+                        11.7,
+                        11.8,
+                        11.9,
+                        12.0,
+                        12.1,
+                        12.2,
+                        12.3,
+                        12.4,
+                        12.5,
+                        12.6,
+                        12.7,
+                        12.8,
+                        12.9,
+                        13.0,
+                        13.1,
+                        13.2,
+                        13.3,
+                        13.4,
+                        13.5,
+                        13.6,
+                        13.7,
+                        13.8,
+                        13.9,
+                        14.0,
+                    ]
                 }
             ]
         }
@@ -167,19 +231,18 @@ class PredictionRequest(BaseModel):
 class TrainRequest(BaseModel):
     hyperparameters: Optional[Dict[str, float]] = Field(
         default=None,
-        description="Dicionário opcional de hiperparâmetros. Se fornecido, sobrescreve os padrões para o novo treino.",
+        description="Dicionário opcional para sobrescrever os hiperparâmetros padrão. Use para Tuning.",
         examples=[
             {
-                "learning_rate": 0.001,
-                "num_epochs": 50,
-                "hidden_size": 64,
-                "batch_size": 32,
+                "learning_rate": 0.0005,
+                "num_epochs": 100,
+                "hidden_size": 128,
+                "batch_size": 64,
             }
         ],
     )
 
     def validate_params(self):
-        """Validação manual adicional se necessário"""
         if self.hyperparameters:
             if self.hyperparameters.get("learning_rate", 1) <= 0:
                 raise ValueError("learning_rate deve ser maior que 0")
@@ -194,6 +257,7 @@ class ConfigResponse(BaseModel):
 # --- Middleware ---
 @app.middleware("http")
 async def monitor_performance(request: Request, call_next):
+    """Middleware para logar latência de cada requisição."""
     start_time = time.time()
     response = await call_next(request)
     process_time = time.time() - start_time
@@ -208,6 +272,10 @@ async def monitor_performance(request: Request, call_next):
 
 
 def detect_drift(input_data: List[float]) -> Dict:
+    """
+    Verifica se os dados de entrada desviam significativamente do padrão de treino (Drift).
+    Utiliza estatísticas descritivas (Min, Max, Std) salvas durante o pré-processamento.
+    """
     stats = ml_components["baseline_stats"]
     if not stats:
         return {"drift": False, "reason": "Baseline not loaded"}
@@ -215,7 +283,7 @@ def detect_drift(input_data: List[float]) -> Dict:
     input_arr = np.array(input_data)
     drift_reasons = []
 
-    # Margem de tolerância de 10%
+    # Margem de tolerância de 10% sobre os limites históricos
     margin = 0.10
     limit_max = stats["max"] * (1 + margin)
     limit_min = stats["min"] * (1 - margin)
@@ -230,6 +298,7 @@ def detect_drift(input_data: List[float]) -> Dict:
             f"Input Min ({np.min(input_arr):.2f}) < Histórico ({limit_min:.2f})"
         )
 
+    # Verifica volatilidade excessiva
     input_std = np.std(input_arr)
     if input_std > (stats["std"] * 3):
         drift_reasons.append("Alta volatilidade detectada (3x superior ao treino).")
@@ -242,11 +311,12 @@ def detect_drift(input_data: List[float]) -> Dict:
 
 
 def background_train_task(params: dict):
+    """Tarefa de background para executar o treinamento sem bloquear a API."""
     ml_components["training_active"] = True
     try:
         logger.info("Iniciando treino em background...")
         training_script.train(override_params=params)
-        # Recarrega o modelo após o treino
+        # Recarrega o modelo após o treino para atualizar a inferência
         load_artifacts()
     except Exception as e:
         logger.error(f"Erro treino background: {e}")
@@ -257,26 +327,40 @@ def background_train_task(params: dict):
 # --- Endpoints ---
 
 
-@app.get("/", tags=["Monitoring"])
+@app.get("/", tags=["3. Observability"], summary="Verificar status da API")
 def root():
     """
-    **Verifica o status básico da API.**
+    **Endpoint Raiz.**
 
-    Retorna o nome da aplicação, versão e status online.
+    Utilizado para verificar se a API está online e acessível.
+
+    **Retorno:**
+    *   Nome da Aplicação
+    *   Versão Atual
+    *   Status: "online"
     """
     return {"app": __app__, "version": __version__, "status": "online"}
 
 
-@app.get("/health", tags=["Monitoring"])
+@app.get(
+    "/health",
+    tags=["3. Observability"],
+    summary="Health Check Completo (Liveness Probe)",
+)
 def health_check():
     """
-    **Health Check Completo (Liveness Probe).**
+    **Monitoramento de Saúde da Infraestrutura.**
 
-    Utilizado para monitoramento de infraestrutura. Verifica:
-    1. Se o modelo está carregado na memória.
-    2. Se o monitoramento de Data Drift está ativo (estatísticas carregadas).
-    3. Se há um treinamento em andamento.
-    4. Consumo de recursos (CPU e Memória).
+    Este endpoint é utilizado por orquestradores (como Kubernetes ou Docker Healthcheck) para saber se o container está saudável.
+
+    **O que é verificado?**
+    1.  **Modelo:** Se o arquivo `.pth` foi carregado corretamente na memória.
+    2.  **Drift Monitor:** Se as estatísticas de baseline existem.
+    3.  **Recursos:** Consumo atual de CPU e Memória RAM.
+    4.  **Status de Treino:** Se há algum job de retreino rodando no momento.
+
+    **Retorno:**
+    *   `status`: "healthy" (operacional) ou "degraded" (com problemas).
     """
     try:
         cpu = psutil.cpu_percent()
@@ -291,15 +375,18 @@ def health_check():
         return {"status": "unhealthy", "detail": str(e)}
 
 
-@app.get("/sample-data", tags=["Inference"])
+@app.get("/sample-data", tags=["1. Inference"], summary="Obter dados reais para teste")
 def get_sample_data():
     """
-    **Obter Dados Reais de Teste.**
+    **Gerador de Dados de Exemplo.**
 
-    Retorna os últimos 60 preços de fechamento do dataset de teste (dados reais).
+    Recupera os últimos 60 dias de preços reais do dataset de teste.
 
-    **Objetivo:** Facilitar o teste manual do endpoint `/predict`.
-    O usuário pode copiar o retorno deste endpoint e colar no corpo da requisição de predição.
+    **Objetivo:**
+    Facilitar o teste manual do endpoint `/predict`. Você pode copiar o JSON retornado aqui e colar diretamente no corpo da requisição de predição.
+
+    **Retorno:**
+    *   `last_prices`: Lista com 60 floats representando preços reais de fechamento.
     """
     try:
         if not os.path.exists(config.TEST_DATA_PATH) or not ml_components["scaler"]:
@@ -307,19 +394,15 @@ def get_sample_data():
                 status_code=404, detail="Dados de teste ou Scaler não encontrados."
             )
 
-        # Carrega dados normalizados
         test_data = np.load(config.TEST_DATA_PATH)
-
-        # Pega os últimos 60 pontos
         seq_len = int(training_script.CURRENT_PARAMS["seq_length"])
+
         if len(test_data) < seq_len:
             raise HTTPException(
                 status_code=400, detail="Dados insuficientes para gerar amostra."
             )
 
         sample_scaled = test_data[-seq_len:]
-
-        # Desnormaliza para valores reais (R$)
         scaler = ml_components["scaler"]
         sample_real = scaler.inverse_transform(sample_scaled).flatten().tolist()
 
@@ -334,30 +417,44 @@ def get_sample_data():
 
 @app.post(
     "/predict",
-    tags=["Inference"],
+    tags=["1. Inference"],
+    summary="Prever preço da ação (D+1)",
+    response_description="Preço previsto e análise de anomalias.",
     responses={
-        200: {"description": "Predição realizada com sucesso."},
-        400: {
-            "description": "ERRO DE VALIDAÇÃO: A lista de entrada não possui exatamente 60 valores."
+        200: {
+            "description": "Sucesso. Retorna o preço previsto.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "predicted_price": 12.45,
+                        "drift_warning": False,
+                        "drift_details": [],
+                    }
+                }
+            },
         },
-        503: {"description": "Modelo não carregado (Serviço Indisponível)."},
+        400: {
+            "description": "Erro de Validação. A lista não possui exatamente 60 itens."
+        },
+        503: {"description": "Serviço Indisponível. O modelo não foi carregado."},
     },
 )
 def predict_next_day(request: PredictionRequest):
     """
-    **Realizar Predição de Preço (D+1).**
+    **Realizar Inferência (Predição).**
 
-    Recebe uma janela histórica de preços e retorna a previsão para o próximo dia.
+    Este é o endpoint principal da aplicação. Ele recebe uma janela histórica de preços e utiliza a rede neural LSTM para prever o fechamento do dia seguinte.
 
-    **⚠️ REQUISITO OBRIGATÓRIO:**
-    * O corpo da requisição deve conter uma lista `last_prices` com **exatamente 60 valores** numéricos (float).
-    * Valores pré-preenchidos estão disponíveis no botão "Try it out" apenas para teste de conectividade.
-    * Para um teste real, utilize os dados do endpoint `/sample-data`.
+    **Regras de Negócio e Fluxo:**
+    1.  **Validação de Entrada:** O sistema exige estritamente **60 valores** (dias). Menos que isso impede a formação da matriz de entrada da rede neural.
+    2.  **Detecção de Data Drift:** Antes de prever, o sistema compara estatisticamente os dados enviados com os dados usados no treinamento.
+        *   Se a volatilidade for muito alta ou os valores fugirem do padrão (Min/Max), um alerta (`drift_warning: true`) é retornado.
+    3.  **Normalização:** Os dados são convertidos para a escala 0-1 (usando o `MinMaxScaler` salvo).
+    4.  **Inferência:** O modelo LSTM processa a sequência.
+    5.  **Desnormalização:** O resultado é convertido de volta para Reais (R$).
 
-    **Funcionalidades:**
-    * Normaliza os dados de entrada.
-    * Executa a inferência no modelo LSTM.
-    * **Detecta Data Drift:** Analisa se os dados de entrada fogem estatisticamente do padrão de treino.
+    **Parâmetros de Entrada:**
+    *   `last_prices`: Lista de 60 floats (Preços de fechamento).
     """
     model = ml_components["model"]
     scaler = ml_components["scaler"]
@@ -380,7 +477,6 @@ def predict_next_day(request: PredictionRequest):
     drift_info = detect_drift(input_data)
 
     try:
-        # CORREÇÃO: Criar DataFrame para evitar UserWarning do sklearn
         input_df = pd.DataFrame(input_data, columns=[config.FEATURE_COLUMN])
         input_scaled = scaler.transform(input_df)
 
@@ -409,26 +505,28 @@ def predict_next_day(request: PredictionRequest):
 
 @app.post(
     "/train",
-    tags=["Training & Tuning"],
-    status_code=202,
+    tags=["2. MLOps & Training"],
+    summary="Disparar retreino do modelo",
+    status_code=status.HTTP_202_ACCEPTED,
     responses={
-        202: {"description": "Treinamento iniciado em background."},
-        409: {"description": "Já existe um treinamento em andamento."},
+        202: {"description": "Treinamento aceito e iniciado em background."},
+        409: {"description": "Conflito. Já existe um treinamento em andamento."},
+        400: {"description": "Hiperparâmetros inválidos (ex: learning_rate negativo)."},
     },
 )
 def trigger_training(request: TrainRequest, background_tasks: BackgroundTasks):
     """
-    **Iniciar Treinamento e Tuning.**
+    **Iniciar Pipeline de Treinamento (Assíncrono).**
 
-    Dispara um processo assíncrono (Background Task) para retreinar o modelo.
+    Permite retreinar o modelo sem parar a API. O processo roda em uma *Background Task*.
 
-    **Tuning de Hiperparâmetros:**
-    * Você pode enviar novos hiperparâmetros no corpo da requisição (ex: `learning_rate`, `num_epochs`).
-    * Se nenhum parâmetro for enviado, o treino usará a configuração padrão.
+    **Funcionalidades:**
+    *   **Retreino Padrão:** Se o corpo da requisição for vazio, usa os parâmetros originais.
+    *   **Hyperparameter Tuning:** Você pode enviar novos valores (ex: `learning_rate`, `hidden_size`) para tentar melhorar a performance do modelo.
 
-    **Nota:** O modelo em memória será atualizado automaticamente ao final do treino.
+    **Comportamento:**
+    Ao finalizar o treino, a API atualiza automaticamente o modelo em memória (Hot Reload).
     """
-    # Validação lógica extra (além da tipagem)
     try:
         request.validate_params()
     except ValueError as ve:
@@ -442,25 +540,37 @@ def trigger_training(request: TrainRequest, background_tasks: BackgroundTasks):
     return {"status": "processing", "message": "Treino/Tuning iniciado em background."}
 
 
-@app.get("/config", tags=["Management"], response_model=ConfigResponse)
+@app.get(
+    "/config",
+    tags=["2. MLOps & Training"],
+    summary="Consultar hiperparâmetros atuais",
+    response_model=ConfigResponse,
+)
 def get_config():
     """
-    **Consultar Configuração Atual.**
+    **Visualizar Configuração Ativa.**
 
-    Retorna os hiperparâmetros que estão sendo utilizados pelo modelo carregado atualmente.
+    Retorna os hiperparâmetros que estão sendo utilizados pelo modelo carregado atualmente na memória.
+    Útil para verificar se um Tuning recente surtiu efeito.
     """
     return {"current_params": training_script.CURRENT_PARAMS}
 
 
-@app.get("/model/info", tags=["Monitoring"])
+@app.get(
+    "/model/info",
+    tags=["3. Observability"],
+    summary="Métricas de performance do modelo",
+)
 def get_model_info():
     """
-    **Informações Detalhadas do Modelo.**
+    **Relatório de Performance do Modelo.**
 
-    Retorna metadados sobre o modelo em produção, incluindo:
-    * Versão da API.
-    * Hiperparâmetros atuais.
-    * **Métricas de Performance (MAE, RMSE):** Obtidas da última avaliação realizada no conjunto de teste.
+    Exibe métricas técnicas calculadas durante a última etapa de avaliação (Test Set).
+
+    **Métricas Retornadas:**
+    *   **MAE (Mean Absolute Error):** Erro médio absoluto em Reais (R$).
+    *   **RMSE (Root Mean Square Error):** Penaliza erros maiores.
+    *   **MAPE:** Erro percentual (ex: 2% de erro médio).
     """
     info = {
         "version": __version__,
@@ -468,7 +578,6 @@ def get_model_info():
         "metrics": None,
     }
 
-    # Tenta carregar métricas salvas pelo script de avaliação
     if os.path.exists(config.METRICS_PATH):
         try:
             with open(config.METRICS_PATH, "r") as f:
@@ -478,19 +587,20 @@ def get_model_info():
             info["metrics_error"] = "Não foi possível ler metrics.json"
     else:
         info["metrics_status"] = (
-            "Métricas não disponíveis (Execute o script 04_evaluate.py)"
+            "Métricas não disponíveis (Execute scripts/04_evaluate.py)"
         )
 
     return info
 
 
-@app.post("/config", tags=["Management"])
+@app.post(
+    "/config", tags=["2. MLOps & Training"], summary="Atualizar configuração global"
+)
 def update_config(request: TrainRequest):
     """
-    **Atualizar Configuração Global.**
+    **Atualizar Parâmetros (Sem Treino).**
 
-    Atualiza os hiperparâmetros na memória sem disparar um treinamento imediato.
-    Útil para preparar uma configuração antes de chamar o endpoint `/train`.
+    Atualiza a configuração global na memória. Útil para preparar um conjunto de parâmetros antes de chamar o endpoint `/train`.
     """
     if request.hyperparameters:
         training_script.CURRENT_PARAMS.update(request.hyperparameters)
@@ -500,13 +610,15 @@ def update_config(request: TrainRequest):
     }
 
 
-@app.post("/model/reload", tags=["Management"])
+@app.post(
+    "/model/reload", tags=["2. MLOps & Training"], summary="Hot Reload de artefatos"
+)
 def reload_model():
     """
-    **Hot Reload de Artefatos.**
+    **Forçar Recarregamento.**
 
-    Força o recarregamento do modelo (`.pth`) e do scaler (`.joblib`) do disco para a memória.
-    Útil caso você tenha substituído os arquivos manualmente e queira atualizar a API sem reiniciar o container.
+    Lê novamente os arquivos `.pth` (Modelo) e `.joblib` (Scaler) do disco.
+    Use este endpoint se você substituiu os arquivos de modelo manualmente no servidor e quer que a API os reconheça sem reiniciar o container.
     """
     load_artifacts()
     return {"message": "Artefatos recarregados."}
